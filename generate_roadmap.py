@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from openai import OpenAI
+from ollama import Client
 import yaml
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -47,8 +47,8 @@ def analyze_image_with_vision(client, image_path):
     try:
         base64_image = encode_image_to_base64(image_path)
         
-        response = client.chat.completions.create(
-            model="gpt-4o",  # Utilisation du modèle GPT-4o qui supporte la vision
+        response = client.chat(
+            model="llama3.2",  
             messages=[
                 {
                     "role": "user",
@@ -72,45 +72,35 @@ def analyze_image_with_vision(client, image_path):
             ],
             max_tokens=1000
         )
-        return response.choices[0].message.content
+        return response.get('message', {}).get('content', '')
     except Exception as e:
         print(f"Erreur détaillée lors de l'analyse de l'image : {type(e).__name__} - {str(e)}")
         return None
 
 def parse_date_to_month_position(client, date_str):
     """
-    Convertit une date en position de mois avec précision.
-    
-    Utilise l'IA pour analyser la date avec une méthode de secours locale.
-    
-    Règles de positionnement :
-    - 1-10 : début du mois (0.0)
-    - 11-20 : milieu du mois (0.5)
-    - 21-31 : fin du mois (1.0)
+    Convertit une date en position de mois.
     
     Retourne un tuple (mois, position_dans_mois)
     """
     # Dictionnaire de mapping des mois avec correction de frappe
     month_map = {
-        'janvier': 0, 'jan': 0, 'janv': 0, 'janveir': 0, 'janiver': 0,
-        'février': 1, 'fevrier': 1, 'feb': 1, 'fev': 1,
+        'janvier': 0, 'jan': 0,
+        'février': 1, 'fev': 1,
         'mars': 2, 'mar': 2,
-        'avril': 3, 'avr': 3, 'apr': 3,
-        'mai': 4, 'may': 4,
+        'avril': 3, 'avr': 3,
+        'mai': 4,
         'juin': 5, 'jun': 5,
-        'juillet': 6, 'jul': 6,
-        'août': 7, 'aout': 7, 'aug': 7,
+        'juillet': 6, 'juil': 6,
+        'août': 7, 'aout': 7,
         'septembre': 8, 'sep': 8,
         'octobre': 9, 'oct': 9,
         'novembre': 10, 'nov': 10,
-        'décembre': 11, 'decembre': 11, 'dec': 11
+        'décembre': 11, 'dec': 11
     }
     
-    # Nettoyer et normaliser la chaîne
-    date_str = date_str.lower().strip()
-    
     try:
-        # Tentative d'analyse avec l'API OpenAI
+        # Tentative d'analyse avec l'API Ollama
         prompt = f"""
         Analyse la date suivante et réponds uniquement avec le jour et le mois au format "JJ mois".
         Corrige toute erreur de frappe ou interprétation.
@@ -118,22 +108,18 @@ def parse_date_to_month_position(client, date_str):
         Date à analyser : {date_str}
         """
         
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
+        response = client.chat(
+            model='llama3.2',
             messages=[
-                {"role": "system", "content": "Tu es un assistant spécialisé dans l'analyse de dates en français."},
                 {"role": "user", "content": prompt}
-            ],
-            max_tokens=50,
-            temperature=0.2
+            ]
         )
         
-        # Extraction de la réponse
-        parsed_date = response.choices[0].message.content.strip().lower()
+        parsed_date = response.get('message', {}).get('content', '').strip()
         
         # Extraction du jour et du mois
         jour_match = re.search(r'\b(\d+)\b', parsed_date)
-        mois_match = re.search(r'\b(' + '|'.join(month_map.keys()) + r')\b', parsed_date)
+        mois_match = re.search(r'\b(' + '|'.join(month_map.keys()) + r')\b', parsed_date.lower())
         
         if not (jour_match and mois_match):
             raise ValueError(f"Impossible de parser la date via LLM : {parsed_date}")
@@ -142,16 +128,14 @@ def parse_date_to_month_position(client, date_str):
         mois = month_map[mois_match.group(1)]
     
     except Exception as e:
-        # Méthode de secours locale
         print(f"Erreur LLM : {e}. Utilisation de la méthode de secours.")
         
-        # Extraction du jour
+        # Méthode de secours locale
         jour_match = re.search(r'\b(\d+)\b', date_str)
         
-        # Extraction du mois
         mois_match = None
         for month_key in month_map.keys():
-            if month_key in date_str:
+            if month_key in date_str.lower():
                 mois_match = month_key
                 break
         
@@ -174,16 +158,9 @@ def parse_date_to_month_position(client, date_str):
 
 def parse_prompt_with_llm(client, prompt):
     """
-    Analyse le prompt de manière intelligente en utilisant l'API OpenAI.
+    Analyse le prompt de manière intelligente en utilisant Ollama.
     
     Gère la création, suppression et modification de projets.
-    
-    Args:
-        client (OpenAI): Client OpenAI pour l'analyse
-        prompt (str): Prompt à analyser
-    
-    Returns:
-        dict: Informations sur l'action à réaliser
     """
     # Prétraitement du prompt
     prompt = prompt.lower().strip()
@@ -217,20 +194,17 @@ def parse_prompt_with_llm(client, prompt):
     """
     
     try:
-        # Appel à l'API OpenAI
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            response_format={"type": "json_object"},
+        # Appel à l'API Ollama
+        response = client.chat(
+            model='llama3.2',
             messages=[
                 {"role": "system", "content": "Tu es un assistant spécialisé dans l'analyse précise de prompts de gestion de projet."},
                 {"role": "user", "content": llm_prompt}
-            ],
-            max_tokens=150,
-            temperature=0.2
+            ]
         )
         
         # Extraction de la réponse JSON
-        task_info = json.loads(response.choices[0].message.content)
+        task_info = json.loads(response.get('message', {}).get('content', '{}'))
         
         # Traitement en fonction de l'action
         if task_info.get('action') == 'delete':
@@ -263,8 +237,8 @@ def parse_prompt_with_llm(client, prompt):
             return {
                 'action': 'create',
                 'task_name': task_info['task_name'],
-                'start_month': start_month,
-                'end_month': end_month,
+                'start_month': start_month[0],  # Seulement le mois
+                'end_month': end_month[0],      # Seulement le mois
                 'color_rgb': color_map.get(task_info.get('color', 'bleu').lower(), [0, 0, 255])
             }
         
@@ -287,8 +261,8 @@ def parse_prompt_with_llm(client, prompt):
             end_date = create_match.group(3)
             color = create_match.group(4) or 'bleu'
             
-            start_month = parse_date_to_month_position(client, start_date)
-            end_month = parse_date_to_month_position(client, end_date)
+            start_month = parse_date_to_month_position(client, start_date)[0]  # Seulement le mois
+            end_month = parse_date_to_month_position(client, end_date)[0]      # Seulement le mois
             
             color_map = {
                 'rouge': [255, 0, 0],
@@ -339,8 +313,8 @@ def create_task_shape(slide, task_name, start_month, end_month, color_rgb, y_pos
     month_width = effective_width / 12
     
     # Ajuster la position de départ en fonction de la position dans le mois
-    left_start = margin_left + ((start_month[0] + start_month[1]) * month_width)
-    left_end = margin_left + ((end_month[0] + end_month[1]) * month_width)
+    left_start = margin_left + ((start_month) * month_width)
+    left_end = margin_left + ((end_month) * month_width)
     
     # Largeur de la tâche
     width = left_end - left_start
@@ -385,115 +359,134 @@ def create_task_shape(slide, task_name, start_month, end_month, color_rgb, y_pos
     
     return shape
 
-def create_roadmap_slide(prs, task_info=None):
-    """Crée ou met à jour un slide de roadmap"""
+def add_month_grid(slide, slide_width, slide_height):
+    # Marges internes
+    margin_left = Inches(0.5)
+    margin_right = Inches(0.5)
+    
+    # Calculer la largeur effective
+    effective_width = slide_width - (margin_left + margin_right)
+    
+    # Créer la grille des mois
+    months_box = slide.shapes.add_table(
+        2,  # 2 rangées
+        12,  # 12 colonnes (mois)
+        margin_left,  # Position X de départ
+        Inches(1.5),  # Position Y
+        effective_width,  # Largeur totale
+        Inches(0.5)  # Hauteur
+    ).table
+    
+    months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+    
+    for i, month in enumerate(months):
+        cell = months_box.cell(0, i)
+        cell.text = month
+        cell.text_frame.paragraphs[0].font.size = Pt(8)
+        cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+
+def create_roadmap_slide(prs, task_info):
+    """
+    Crée ou met à jour un slide de roadmap en fonction des informations de tâche.
+    
+    Args:
+        prs (Presentation): La présentation PowerPoint
+        task_info (dict): Informations sur la tâche à créer/modifier
+    """
     print("\n=== Création/Mise à jour du slide de roadmap ===")
     
-    # Utiliser le premier slide ou en créer un nouveau
-    if len(prs.slides) > 0:
-        slide = prs.slides[0]
-        print(f"Utilisation du slide existant (index 0)")
-    else:
-        slide = prs.slides.add_slide(prs.slide_layouts[6])  # Layout vide
-        print(f"Création d'un nouveau slide")
+    # Vérifier si un slide de roadmap existe déjà, sinon en créer un
+    roadmap_slide = None
+    for slide in prs.slides:
+        if slide.slide_layout.name == "Blank":
+            roadmap_slide = slide
+            break
     
-    # Vérifier si la grille des mois existe déjà
-    months_grid_exists = any(shape.has_table for shape in slide.shapes)
+    if roadmap_slide is None:
+        # Créer un nouveau slide si aucun n'existe
+        blank_slide_layout = prs.slide_layouts[6]  # Layout vide
+        roadmap_slide = prs.slides.add_slide(blank_slide_layout)
+        print("Création d'un nouveau slide")
     
-    # Titre "ROADMAP"
-    if not any(shape.has_text_frame and shape.text_frame.text == "ROADMAP" for shape in slide.shapes):
-        title = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(8), Inches(0.5))
-        title.text_frame.text = "ROADMAP"
-        title.text_frame.paragraphs[0].font.size = Pt(24)
-        title.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)    
+    # Dimensions de la slide
+    slide_width = prs.slide_width
+    slide_height = prs.slide_height
+    print(f"Dimensions de la slide : {slide_width/914400:.2f} x {slide_height/914400:.2f} inches")
     
-    if not months_grid_exists:
-        print("Ajout de la grille des mois")
-        
-        # Calculer les dimensions de la slide
-        slide_width = prs.slide_width
-        slide_height = prs.slide_height
-        
-        print(f"Dimensions de la slide : {slide_width / 914400:.2f} x {slide_height / 914400:.2f} inches")
-        
-        # Marges internes
-        margin_left = Inches(0.5)
-        margin_right = Inches(0.5)
-        
-        # Calculer la largeur effective
-        effective_width = slide_width - (margin_left + margin_right)
-        
-        # Créer la grille des mois
-        months_box = slide.shapes.add_table(
-            2,  # 2 rangées
-            12,  # 12 colonnes (mois)
-            margin_left,  # Position X de départ
-            Inches(1.5),  # Position Y
-            effective_width,  # Largeur totale
-            Inches(0.5)  # Hauteur
-        ).table
-        
-        months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
-        
-        for i, month in enumerate(months):
-            cell = months_box.cell(0, i)
-            cell.text = month
-            cell.text_frame.paragraphs[0].font.size = Pt(8)
-            cell.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
-    else:
-        print("Grille des mois déjà existante")
+    # Ajouter la grille des mois
+    add_month_grid(roadmap_slide, slide_width, slide_height)
     
-    # Gestion des actions
-    if task_info is None:
-        return slide
+    # Traitement de l'action
+    if task_info['action'] == 'create':
+        # Création d'une nouvelle tâche
+        print("--- Création d'une nouvelle tâche ---")
+        task_name = task_info['task_name']
+        start_month = task_info['start_month']
+        end_month = task_info['end_month']
+        color_rgb = task_info['color_rgb']
+        
+        # Compter les formes existantes
+        existing_shapes = len(roadmap_slide.shapes)
+        print(f"Nombre de formes existantes : {existing_shapes}")
+        
+        # Créer la forme de la tâche
+        create_task_shape(
+            roadmap_slide, 
+            task_name, 
+            start_month, 
+            end_month, 
+            color_rgb, 
+            y_position=None, 
+            slide_width=slide_width
+        )
+        
+        print(f"Tâche '{task_name}' créée avec succès !")
+        print(f"Nom de la tâche : {task_name}")
+        print(f"Mois de début : {start_month}")
+        print(f"Mois de fin : {end_month}")
+        print(f"Couleur RGB : {color_rgb}")
     
-    # Action de suppression
-    if task_info.get('action') == 'delete':
-        task_name_to_delete = task_info['task_name']
-        print(f"Suppression du projet : {task_name_to_delete}")
+    elif task_info['action'] == 'delete':
+        # Suppression d'une tâche
+        task_name = task_info['task_name']
+        print(f"Suppression du projet : {task_name}")
         
-        # Parcourir et supprimer les formes de tâches
-        for shape in list(slide.shapes):
-            if shape.has_text_frame and shape.text_frame.text != "ROADMAP":
-                # Vérifier si le nom du projet correspond
-                if task_name_to_delete == shape.text_frame.text:
-                    # Méthode de suppression
-                    xml_element = shape.element
-                    xml_element.getparent().remove(xml_element)
-                    print(f"Projet '{task_name_to_delete}' supprimé")
-                    break
-        
-        # Repositionner les tâches restantes
+        # Récupérer toutes les formes de tâches
         task_shapes = [
-            shape for shape in slide.shapes 
+            shape for shape in roadmap_slide.shapes 
             if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
         ]
         
-        # Trier les formes de tâches par position Y croissante
-        task_shapes.sort(key=lambda x: x.top)
-        
-        # Repositionner uniquement les tâches
-        start_y = Inches(2.5)  # Position Y initiale pour les tâches
+        # Supprimer la tâche spécifique
+        task_deleted = False
         for shape in task_shapes:
-            # Repositionner la forme de tâche
-            shape.top = start_y
-            start_y += Inches(0.6)  # Espacement entre les tâches
+            if task_name in shape.text_frame.text:
+                sp = shape._element
+                sp.getparent().remove(sp)
+                print(f"Tâche '{task_name}' supprimée avec succès !")
+                task_deleted = True
+                break
+        
+        if task_deleted:
+            # Repositionner les tâches restantes
+            # Trier les formes de tâches par position Y croissante
+            task_shapes = [
+                shape for shape in roadmap_slide.shapes 
+                if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
+            ]
+            task_shapes.sort(key=lambda x: x.top)
+            
+            # Repositionner uniquement les tâches
+            start_y = Inches(2.5)  # Position Y initiale pour les tâches
+            for shape in task_shapes:
+                # Repositionner la forme de tâche
+                shape.top = start_y
+                start_y += Inches(0.6)  # Espacement entre les tâches
     
-    # Action de création de projet
-    elif task_info.get('action') == 'create':
-        create_task_shape(
-            slide,
-            task_info['task_name'],
-            task_info['start_month'],
-            task_info['end_month'],
-            task_info['color_rgb'],
-            slide_width=prs.slide_width
-        )
-    
-    return slide
+    return roadmap_slide
 
 def main():
-    # Créer les dossiers de sortie
+    # Charger les dossiers de sortie
     templates_dir = "templates"
     output_dir = "generated"
     
@@ -505,13 +498,16 @@ def main():
     template_path = os.path.join(templates_dir, "roadmap_template.pptx")
     output_path = os.path.join(output_dir, "roadmap.pptx")
     
-    # Supprimer le fichier existant dans le répertoire de génération
-    if os.path.exists(output_path):
-        try:
-            os.remove(output_path)
-            print(f"Fichier existant supprimé : {output_path}")
-        except Exception as e:
-            print(f"Erreur lors de la suppression du fichier : {e}")
+    # Configuration du client Ollama
+    client = Client(host='http://localhost:11434')
+    
+    # Configuration
+    config = load_config()
+    
+    # Lire les prompts
+    prompts = []
+    with open('prompt.txt', 'r') as f:
+        prompts = f.readlines()
     
     # Charger ou créer la présentation
     if os.path.exists(template_path):
@@ -525,31 +521,11 @@ def main():
         prs.save(template_path)
         print(f"Template vide sauvegardé dans {template_path}")
     
-    # Configuration
-    config = load_config()
-    api_key = os.getenv('OPENAI_API_KEY')
-    client = OpenAI(api_key=api_key)
-    
-    # Lire les prompts
-    prompts = []
-    
-    # Vérifier si des arguments en ligne de commande sont passés
-    if len(sys.argv) > 1:
-        # Concaténer tous les arguments en ligne de commande
-        prompts = [' '.join(sys.argv[1:])]
-    
-    # Si pas d'arguments en ligne de commande, essayer de lire le fichier
-    if not prompts:
-        try:
-            with open('prompt.txt', 'r') as f:
-                prompts = [line.strip() for line in f.readlines() if line.strip()]
-        except FileNotFoundError:
-            # Si le fichier n'existe pas, demander une saisie interactive
-            prompts = [input("Entrez votre demande (ex: ajoute le projet TOTO se déroule du 1er février au 13 juin (couleur : orange)) : ")]
-    
-    # Traiter chaque prompt successivement
+    # Traitement des prompts
     for prompt in prompts:
-        print(f"\n--- Traitement du prompt : {prompt} ---")
+        prompt = prompt.strip()
+        if not prompt:
+            continue
         
         try:
             task_info = parse_prompt_with_llm(client, prompt)
@@ -557,18 +533,13 @@ def main():
             if task_info:
                 # Créer ou mettre à jour le slide de roadmap
                 create_roadmap_slide(prs, task_info)
-                
-                # Sauvegarder la présentation après chaque prompt
-                prs.save(output_path)
-                print(f"Présentation mise à jour : {output_path}")
-            else:
-                print("Impossible de parser le prompt")
         
         except Exception as e:
             print(f"Erreur lors du traitement du prompt '{prompt}' : {e}")
-            traceback.print_exc()
     
-    print("\nTraitement de tous les prompts terminé.")
+    # Sauvegarder la présentation une seule fois après tous les traitements
+    prs.save(output_path)
+    print(f"Présentation sauvegardée dans {output_path}")
 
 if __name__ == "__main__":
     main()
