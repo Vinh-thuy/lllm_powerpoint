@@ -173,46 +173,148 @@ def parse_date_to_month_position(client, date_str):
     return (mois, position)
 
 def parse_prompt_with_llm(client, prompt):
-    """Analyse le prompt pour extraire les informations de la tâche"""
-    # Extraction des informations de base
-    name_match = re.search(r"projet '([^']+)'", prompt)
-    start_date_match = re.search(r"du (\d+\s*\w+)", prompt)
-    end_date_match = re.search(r"au (\d+\s*\w+)", prompt)
-    color_match = re.search(r"couleur\s*:\s*(\w+)", prompt, re.IGNORECASE)
+    """
+    Analyse le prompt de manière intelligente en utilisant l'API OpenAI.
     
-    if not (name_match and start_date_match and end_date_match):
-        raise ValueError("Format de prompt invalide")
+    Gère la création, suppression et modification de projets.
     
-    # Extraire les informations
-    task_name = name_match.group(1)
-    start_date = start_date_match.group(1)
-    end_date = end_date_match.group(1)
+    Args:
+        client (OpenAI): Client OpenAI pour l'analyse
+        prompt (str): Prompt à analyser
     
-    # Couleur par défaut
-    color = color_match.group(1).lower() if color_match else "bleu"
+    Returns:
+        dict: Informations sur l'action à réaliser
+    """
+    # Prétraitement du prompt
+    prompt = prompt.lower().strip()
     
-    # Convertir les dates en positions de mois
-    start_month = parse_date_to_month_position(client, start_date)
-    end_month = parse_date_to_month_position(client, end_date)
+    # Cas de suppression directe
+    delete_match = re.search(r"delete\s*projet\s*['\"]([^'\"]+)['\"]", prompt)
+    if delete_match:
+        return {
+            'action': 'delete',
+            'task_name': delete_match.group(1)
+        }
     
-    # Mapping des couleurs
-    color_map = {
-        'rouge': [255, 0, 0],
-        'bleu': [0, 0, 255],
-        'vert': [0, 255, 0],
-        'jaune': [255, 255, 0],
-        'orange': [255, 165, 0],
-        'violet': [128, 0, 128],
-        'rose': [255, 192, 203],
-        'marron': [165, 42, 42]
-    }
+    # Prompt pour l'analyse intelligente
+    llm_prompt = f"""
+    Tu es un assistant spécialisé dans l'analyse de prompts de gestion de projet.
+    Analyse le prompt suivant et réponds au format JSON avec précision :
+
+    Règles :
+    - Si le prompt concerne la création d'un projet, fournis :
+      * 'action': 'create'
+      * 'task_name': nom du projet
+      * 'start_date': date de début
+      * 'end_date': date de fin
+      * 'color': couleur du projet (optionnel)
+
+    - Si le prompt concerne la suppression d'un projet, fournis :
+      * 'action': 'delete'
+      * 'task_name': nom du projet à supprimer
+
+    Prompt à analyser : {prompt}
+    """
     
-    return {
-        'task_name': task_name,
-        'start_month': start_month,
-        'end_month': end_month,
-        'color_rgb': color_map.get(color, [0, 0, 255])  # Bleu par défaut
-    }
+    try:
+        # Appel à l'API OpenAI
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "Tu es un assistant spécialisé dans l'analyse précise de prompts de gestion de projet."},
+                {"role": "user", "content": llm_prompt}
+            ],
+            max_tokens=150,
+            temperature=0.2
+        )
+        
+        # Extraction de la réponse JSON
+        task_info = json.loads(response.choices[0].message.content)
+        
+        # Traitement en fonction de l'action
+        if task_info.get('action') == 'delete':
+            return {
+                'action': 'delete',
+                'task_name': task_info['task_name']
+            }
+        
+        elif task_info.get('action') == 'create':
+            # Vérification des champs obligatoires
+            if not all(key in task_info for key in ['task_name', 'start_date', 'end_date']):
+                raise ValueError("Informations de projet incomplètes")
+            
+            # Convertir les dates en positions de mois
+            start_month = parse_date_to_month_position(client, task_info['start_date'])
+            end_month = parse_date_to_month_position(client, task_info['end_date'])
+            
+            # Mapping des couleurs
+            color_map = {
+                'rouge': [255, 0, 0],
+                'bleu': [0, 0, 255],
+                'vert': [0, 255, 0],
+                'jaune': [255, 255, 0],
+                'orange': [255, 165, 0],
+                'violet': [128, 0, 128],
+                'rose': [255, 192, 203],
+                'marron': [165, 42, 42]
+            }
+            
+            return {
+                'action': 'create',
+                'task_name': task_info['task_name'],
+                'start_month': start_month,
+                'end_month': end_month,
+                'color_rgb': color_map.get(task_info.get('color', 'bleu').lower(), [0, 0, 255])
+            }
+        
+        else:
+            raise ValueError(f"Action non reconnue : {task_info.get('action')}")
+    
+    except json.JSONDecodeError:
+        # Tentative de parsing manuel si le JSON échoue
+        delete_match = re.search(r"supprime(?:r)?\s*(?:le)?\s*projet\s*['\"]([^'\"]+)['\"]", prompt, re.IGNORECASE)
+        if delete_match:
+            return {
+                'action': 'delete',
+                'task_name': delete_match.group(1)
+            }
+        
+        create_match = re.search(r"projet\s*['\"]([^'\"]+)['\"]\s*du\s*(\d+\s*\w+)\s*au\s*(\d+\s*\w+)(?:\s*\(couleur\s*:\s*(\w+)\))?", prompt, re.IGNORECASE)
+        if create_match:
+            task_name = create_match.group(1)
+            start_date = create_match.group(2)
+            end_date = create_match.group(3)
+            color = create_match.group(4) or 'bleu'
+            
+            start_month = parse_date_to_month_position(client, start_date)
+            end_month = parse_date_to_month_position(client, end_date)
+            
+            color_map = {
+                'rouge': [255, 0, 0],
+                'bleu': [0, 0, 255],
+                'vert': [0, 255, 0],
+                'jaune': [255, 255, 0],
+                'orange': [255, 165, 0],
+                'violet': [128, 0, 128],
+                'rose': [255, 192, 203],
+                'marron': [165, 42, 42]
+            }
+            
+            return {
+                'action': 'create',
+                'task_name': task_name,
+                'start_month': start_month,
+                'end_month': end_month,
+                'color_rgb': color_map.get(color.lower(), [0, 0, 255])
+            }
+        
+        print(f"Erreur : impossible de parser le prompt '{prompt}'")
+        raise ValueError(f"Format de prompt non reconnu : {prompt}")
+    
+    except Exception as e:
+        print(f"Erreur lors de l'analyse du prompt par l'IA : {e}")
+        raise ValueError(f"Impossible de parser le prompt : {prompt}")
 
 def create_task_shape(slide, task_name, start_month, end_month, color_rgb, y_position=None, slide_width=None):
     """Crée une forme de tâche dans le slide"""
@@ -247,12 +349,7 @@ def create_task_shape(slide, task_name, start_month, end_month, color_rgb, y_pos
     existing_shapes = [shape for shape in slide.shapes if shape.has_text_frame and shape.text_frame.text != "ROADMAP"]
     print(f"\nNombre de formes existantes : {len(existing_shapes)}")
     
-    # Afficher les détails des formes existantes
-    for i, shape in enumerate(existing_shapes, 1):
-        print(f"Forme {i}:")
-        print(f"  Texte : {shape.text_frame.text}")
-        print(f"  Position : {shape.top / 914400:.2f} inches")
-        print(f"  Hauteur : {shape.height / 914400:.2f} inches")
+
     
     # Si aucune position Y n'est spécifiée, trouver la prochaine position disponible
     if y_position is None:
@@ -264,12 +361,7 @@ def create_task_shape(slide, task_name, start_month, end_month, color_rgb, y_pos
                 shape.top / 914400 + shape.height / 914400 + 0.2 
                 for shape in existing_shapes
             )
-    
-    print(f"\nPosition Y calculée : {y_position} inches")
-    print(f"Largeur de slide : {slide_width / 914400:.2f} inches")
-    print(f"Largeur effective : {effective_width / 914400:.2f} inches")
-    print(f"Position X de début : {left_start / 914400:.2f} inches")
-    print(f"Largeur de la tâche : {width / 914400:.2f} inches")
+
     
     # Créer la forme
     shape = slide.shapes.add_shape(
@@ -313,7 +405,6 @@ def create_roadmap_slide(prs, task_info=None):
         title = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(8), Inches(0.5))
         title.text_frame.text = "ROADMAP"
         title.text_frame.paragraphs[0].font.size = Pt(24)
-        title.text_frame.paragraphs[0].font.bold = True
         title.text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)    
     
     if not months_grid_exists:
@@ -352,8 +443,44 @@ def create_roadmap_slide(prs, task_info=None):
     else:
         print("Grille des mois déjà existante")
     
-    # Ajouter la nouvelle tâche si spécifiée
-    if task_info:
+    # Gestion des actions
+    if task_info is None:
+        return slide
+    
+    # Action de suppression
+    if task_info.get('action') == 'delete':
+        task_name_to_delete = task_info['task_name']
+        print(f"Suppression du projet : {task_name_to_delete}")
+        
+        # Parcourir et supprimer les formes de tâches
+        for shape in list(slide.shapes):
+            if shape.has_text_frame and shape.text_frame.text != "ROADMAP":
+                # Vérifier si le nom du projet correspond
+                if task_name_to_delete == shape.text_frame.text:
+                    # Méthode de suppression
+                    xml_element = shape.element
+                    xml_element.getparent().remove(xml_element)
+                    print(f"Projet '{task_name_to_delete}' supprimé")
+                    break
+        
+        # Repositionner les tâches restantes
+        task_shapes = [
+            shape for shape in slide.shapes 
+            if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
+        ]
+        
+        # Trier les formes de tâches par position Y croissante
+        task_shapes.sort(key=lambda x: x.top)
+        
+        # Repositionner uniquement les tâches
+        start_y = Inches(2.5)  # Position Y initiale pour les tâches
+        for shape in task_shapes:
+            # Repositionner la forme de tâche
+            shape.top = start_y
+            start_y += Inches(0.6)  # Espacement entre les tâches
+    
+    # Action de création de projet
+    elif task_info.get('action') == 'create':
         create_task_shape(
             slide,
             task_info['task_name'],
