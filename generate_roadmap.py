@@ -160,7 +160,7 @@ def parse_prompt_with_llm(client, prompt):
     """
     Analyse le prompt de manière intelligente en utilisant Ollama.
     
-    Gère la création, suppression et modification de projets.
+    Gère la création, suppression, et modification de projets.
     """
     # Prétraitement du prompt
     prompt = prompt.lower().strip()
@@ -189,6 +189,13 @@ def parse_prompt_with_llm(client, prompt):
     - Si le prompt concerne la suppression d'un projet, fournis :
       * 'action': 'delete'
       * 'task_name': nom du projet à supprimer
+
+    - Si le prompt concerne la modification d'un projet, fournis :
+      * 'action': 'update'
+      * 'task_name': nom du projet à modifier
+      * 'start_date': nouvelle date de début (optionnel)
+      * 'end_date': nouvelle date de fin (optionnel)
+      * 'color': nouvelle couleur (optionnel)
 
     Prompt à analyser : {prompt}
     """
@@ -242,46 +249,109 @@ def parse_prompt_with_llm(client, prompt):
                 'color_rgb': color_map.get(task_info.get('color', 'bleu').lower(), [0, 0, 255])
             }
         
+        elif task_info.get('action') == 'update':
+            # Vérification des champs
+            if 'task_name' not in task_info:
+                raise ValueError("Nom du projet manquant pour la modification")
+            
+            update_info = {
+                'action': 'update',
+                'task_name': task_info['task_name']
+            }
+            
+            # Gestion optionnelle des dates et couleur
+            if 'start_date' in task_info:
+                update_info['start_month'] = parse_date_to_month_position(client, task_info['start_date'])[0]
+            
+            if 'end_date' in task_info:
+                update_info['end_month'] = parse_date_to_month_position(client, task_info['end_date'])[0]
+            
+            if 'color' in task_info:
+                color_map = {
+                    'rouge': [255, 0, 0],
+                    'bleu': [0, 0, 255],
+                    'vert': [0, 255, 0],
+                    'jaune': [255, 255, 0],
+                    'orange': [255, 165, 0],
+                    'violet': [128, 0, 128],
+                    'rose': [255, 192, 203],
+                    'marron': [165, 42, 42]
+                }
+                update_info['color_rgb'] = color_map.get(task_info['color'].lower(), [0, 0, 255])
+            
+            return update_info
+        
         else:
             raise ValueError(f"Action non reconnue : {task_info.get('action')}")
     
     except json.JSONDecodeError:
         # Tentative de parsing manuel si le JSON échoue
-        delete_match = re.search(r"supprime(?:r)?\s*(?:le)?\s*projet\s*['\"]([^'\"]+)['\"]", prompt, re.IGNORECASE)
-        if delete_match:
-            return {
-                'action': 'delete',
-                'task_name': delete_match.group(1)
-            }
-        
-        create_match = re.search(r"projet\s*['\"]([^'\"]+)['\"]\s*du\s*(\d+\s*\w+)\s*au\s*(\d+\s*\w+)(?:\s*\(couleur\s*:\s*(\w+)\))?", prompt, re.IGNORECASE)
+        # Cas de création de projet
+        create_match = re.search(r"(?:je veux un|créer)\s*projet\s*['\"]([^'\"]+)['\"]\s*du\s*(\d+\s*\w+)\s*au\s*(\d+\s*\w+)(?:\s*\(couleur\s*:\s*(\w+)\))?", prompt, re.IGNORECASE)
         if create_match:
             task_name = create_match.group(1)
             start_date = create_match.group(2)
             end_date = create_match.group(3)
             color = create_match.group(4) or 'bleu'
             
-            start_month = parse_date_to_month_position(client, start_date)[0]  # Seulement le mois
-            end_month = parse_date_to_month_position(client, end_date)[0]      # Seulement le mois
-            
-            color_map = {
-                'rouge': [255, 0, 0],
-                'bleu': [0, 0, 255],
-                'vert': [0, 255, 0],
-                'jaune': [255, 255, 0],
-                'orange': [255, 165, 0],
-                'violet': [128, 0, 128],
-                'rose': [255, 192, 203],
-                'marron': [165, 42, 42]
-            }
-            
             return {
                 'action': 'create',
                 'task_name': task_name,
-                'start_month': start_month,
-                'end_month': end_month,
-                'color_rgb': color_map.get(color.lower(), [0, 0, 255])
+                'start_month': parse_date_to_month_position(client, start_date)[0],
+                'end_month': parse_date_to_month_position(client, end_date)[0],
+                'color_rgb': {
+                    'rouge': [255, 0, 0],
+                    'bleu': [0, 0, 255],
+                    'vert': [0, 255, 0],
+                    'jaune': [255, 255, 0],
+                    'orange': [255, 165, 0],
+                    'violet': [128, 0, 128],
+                    'rose': [255, 192, 203],
+                    'marron': [165, 42, 42]
+                }.get(color.lower(), [0, 0, 255])
             }
+        
+        # Cas de suppression de projet
+        delete_match = re.search(r"(?:delete|supprime(?:r)?)\s*(?:le)?\s*projet\s*['\"]([^'\"]+)['\"]", prompt, re.IGNORECASE)
+        if delete_match:
+            return {
+                'action': 'delete',
+                'task_name': delete_match.group(1)
+            }
+        
+        # Cas de modification de projet
+        update_match = re.search(r"(?:modifi(?:er|e)|modifier)\s*(?:le)?\s*projet\s*['\"]([^'\"]+)['\"]\s*(?:du\s*(\d+\s*\w+)\s*(?:au\s*(\d+\s*\w+))?)?(?:\s*(?:avec|en)\s*(\w+)\s*couleur?)?", prompt, re.IGNORECASE)
+        if update_match:
+            task_name = update_match.group(1)
+            start_date = update_match.group(2)
+            end_date = update_match.group(3)
+            color = update_match.group(4)
+            
+            update_info = {
+                'action': 'update',
+                'task_name': task_name
+            }
+            
+            if start_date:
+                update_info['start_month'] = parse_date_to_month_position(client, start_date)[0]
+            
+            if end_date:
+                update_info['end_month'] = parse_date_to_month_position(client, end_date)[0]
+            
+            if color:
+                color_map = {
+                    'rouge': [255, 0, 0],
+                    'bleu': [0, 0, 255],
+                    'vert': [0, 255, 0],
+                    'jaune': [255, 255, 0],
+                    'orange': [255, 165, 0],
+                    'violet': [128, 0, 128],
+                    'rose': [255, 192, 203],
+                    'marron': [165, 42, 42]
+                }
+                update_info['color_rgb'] = color_map.get(color.lower(), [0, 0, 255])
+            
+            return update_info
         
         print(f"Erreur : impossible de parser le prompt '{prompt}'")
         raise ValueError(f"Format de prompt non reconnu : {prompt}")
@@ -391,7 +461,7 @@ def create_roadmap_slide(prs, task_info):
     
     Args:
         prs (Presentation): La présentation PowerPoint
-        task_info (dict): Informations sur la tâche à créer/modifier
+        task_info (dict): Informations sur la tâche à créer/modifier/supprimer
     """
     print("\n=== Création/Mise à jour du slide de roadmap ===")
     
@@ -416,6 +486,27 @@ def create_roadmap_slide(prs, task_info):
     # Ajouter la grille des mois
     add_month_grid(roadmap_slide, slide_width, slide_height)
     
+    # Récupérer toutes les formes de tâches existantes
+    task_shapes = [
+        shape for shape in roadmap_slide.shapes 
+        if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
+    ]
+    
+    # Fonction pour repositionner verticalement les tâches
+    def reposition_tasks(shapes):
+        # Trier les formes de tâches par position Y croissante
+        shapes.sort(key=lambda x: x.top)
+        
+        # Position Y initiale pour les tâches
+        start_y = Inches(2.5)
+        task_height = Inches(0.6)  # Hauteur standard d'une tâche
+        spacing = Inches(0.2)  # Espacement minimal entre les tâches
+        
+        for shape in shapes:
+            # Repositionner la forme de tâche
+            shape.top = start_y
+            start_y += task_height + spacing
+    
     # Traitement de l'action
     if task_info['action'] == 'create':
         # Création d'une nouvelle tâche
@@ -424,10 +515,6 @@ def create_roadmap_slide(prs, task_info):
         start_month = task_info['start_month']
         end_month = task_info['end_month']
         color_rgb = task_info['color_rgb']
-        
-        # Compter les formes existantes
-        existing_shapes = len(roadmap_slide.shapes)
-        print(f"Nombre de formes existantes : {existing_shapes}")
         
         # Créer la forme de la tâche
         create_task_shape(
@@ -440,6 +527,15 @@ def create_roadmap_slide(prs, task_info):
             slide_width=slide_width
         )
         
+        # Récupérer à jour les formes de tâches
+        task_shapes = [
+            shape for shape in roadmap_slide.shapes 
+            if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
+        ]
+        
+        # Repositionner toutes les tâches
+        reposition_tasks(task_shapes)
+        
         print(f"Tâche '{task_name}' créée avec succès !")
         print(f"Nom de la tâche : {task_name}")
         print(f"Mois de début : {start_month}")
@@ -450,12 +546,6 @@ def create_roadmap_slide(prs, task_info):
         # Suppression d'une tâche
         task_name = task_info['task_name']
         print(f"Suppression du projet : {task_name}")
-        
-        # Récupérer toutes les formes de tâches
-        task_shapes = [
-            shape for shape in roadmap_slide.shapes 
-            if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
-        ]
         
         # Supprimer la tâche spécifique
         task_deleted = False
@@ -468,20 +558,95 @@ def create_roadmap_slide(prs, task_info):
                 break
         
         if task_deleted:
-            # Repositionner les tâches restantes
-            # Trier les formes de tâches par position Y croissante
+            # Récupérer à jour les formes de tâches
             task_shapes = [
                 shape for shape in roadmap_slide.shapes 
                 if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
             ]
-            task_shapes.sort(key=lambda x: x.top)
             
-            # Repositionner uniquement les tâches
-            start_y = Inches(2.5)  # Position Y initiale pour les tâches
-            for shape in task_shapes:
-                # Repositionner la forme de tâche
-                shape.top = start_y
-                start_y += Inches(0.6)  # Espacement entre les tâches
+            # Repositionner toutes les tâches
+            reposition_tasks(task_shapes)
+    
+    elif task_info['action'] == 'update':
+        # Mise à jour d'une tâche existante
+        task_name = task_info['task_name']
+        print(f"Mise à jour du projet : {task_name}")
+        
+        # Trouver la tâche à modifier
+        task_shape = None
+        for shape in task_shapes:
+            if task_name in shape.text_frame.text:
+                task_shape = shape
+                break
+        
+        if task_shape is None:
+            print(f"Erreur : Projet '{task_name}' non trouvé")
+            return roadmap_slide
+        
+        # Récupérer les informations actuelles
+        current_start_month = None
+        current_end_month = None
+        current_color_rgb = None
+        
+        # Extraire les informations de la forme existante
+        for shape in task_shapes:
+            if task_name in shape.text_frame.text:
+                # Utiliser la position et la largeur pour déterminer les mois
+                slide_width = prs.slide_width
+                margin_left = Inches(0.5)
+                margin_right = Inches(0.5)
+                effective_width = slide_width - (margin_left + margin_right)
+                month_width = effective_width / 12
+                
+                current_start_month = int((shape.left - margin_left) / month_width)
+                current_end_month = int((shape.left + shape.width - margin_left) / month_width)
+                
+                # Correction de l'extraction de la couleur
+                try:
+                    current_color_rgb = [
+                        shape.fill.fore_color.rgb.red, 
+                        shape.fill.fore_color.rgb.green, 
+                        shape.fill.fore_color.rgb.blue
+                    ]
+                except AttributeError:
+                    # Couleur par défaut si l'extraction échoue
+                    current_color_rgb = [0, 0, 255]  # Bleu par défaut
+                
+                break
+        
+        # Mettre à jour les informations si spécifiées
+        start_month = task_info.get('start_month', current_start_month)
+        end_month = task_info.get('end_month', current_end_month)
+        color_rgb = task_info.get('color_rgb', current_color_rgb)
+        
+        # Supprimer l'ancienne forme
+        sp = task_shape._element
+        sp.getparent().remove(sp)
+        
+        # Créer une nouvelle forme avec les informations mises à jour
+        create_task_shape(
+            roadmap_slide, 
+            task_name, 
+            start_month, 
+            end_month, 
+            color_rgb, 
+            y_position=None, 
+            slide_width=slide_width
+        )
+        
+        # Récupérer à jour les formes de tâches
+        task_shapes = [
+            shape for shape in roadmap_slide.shapes 
+            if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
+        ]
+        
+        # Repositionner toutes les tâches
+        reposition_tasks(task_shapes)
+        
+        print(f"Projet '{task_name}' mis à jour avec succès !")
+        print(f"Nouveau mois de début : {start_month}")
+        print(f"Nouveau mois de fin : {end_month}")
+        print(f"Nouvelle couleur RGB : {color_rgb}")
     
     return roadmap_slide
 

@@ -1,4 +1,5 @@
 je veux un projet '1234' du 20 avril au 5 decembre (couleur : rouge)
+je veux un projet 'psoitn' du 28 mai au 10 decembre (couleur : rouge)
 je veux un projet 'qsqsc' du 1 janveir au 15 mars (couleur : bleu)
 delete  projet '1234'
 créer projet 'Projet TEST' du 28 mars au 1 juuillet  (couleur : vert)
