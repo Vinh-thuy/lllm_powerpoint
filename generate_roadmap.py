@@ -79,128 +79,110 @@ def analyze_image_with_vision(client, image_path):
 
 def parse_date_to_month_position(client, date_str):
     """
-    Convertit une date en position de mois.
-    
-    Retourne un tuple (mois, position_dans_mois)
+    Convertit une date en français en position de mois.
+    Gère différents formats de dates.
     """
-    # Dictionnaire de mapping des mois avec correction de frappe
-    month_map = {
-        'janvier': 0, 'jan': 0,
-        'février': 1, 'fev': 1,
-        'mars': 2, 'mar': 2,
-        'avril': 3, 'avr': 3,
-        'mai': 4,
-        'juin': 5, 'jun': 5,
-        'juillet': 6, 'juil': 6,
-        'août': 7, 'aout': 7,
-        'septembre': 8, 'sep': 8,
-        'octobre': 9, 'oct': 9,
-        'novembre': 10, 'nov': 10,
-        'décembre': 11, 'dec': 11
+    # Normalisation de la date
+    date_str = date_str.lower().strip()
+    
+    # Dictionnaire de mapping des mois
+    mois_mapping = {
+        'janvier': 1, 'jan': 1, 
+        'février': 2, 'fevrier': 2, 'fev': 2, 
+        'mars': 3, 
+        'avril': 4, 'avr': 4, 
+        'mai': 5, 
+        'juin': 6, 
+        'juillet': 7, 'juil': 7, 
+        'août': 8, 'aout': 8, 
+        'septembre': 9, 'sept': 9, 
+        'octobre': 10, 'oct': 10, 
+        'novembre': 11, 'nov': 11, 
+        'décembre': 12, 'decembre': 12, 'dec': 12
     }
     
+    # Extraction du jour et du mois
     try:
-        # Tentative d'analyse avec l'API Ollama
-        prompt = f"""
-        Analyse la date suivante et réponds uniquement avec le jour et le mois au format "JJ mois".
-        Corrige toute erreur de frappe ou interprétation.
+        # Gestion des formats : 
+        # 1. "1 mars", "1er mars", "01 mars"
+        # 2. "2023-04-20", "01-01-2024"
+        # 3. "20 avril 2023"
         
-        Date à analyser : {date_str}
-        """
+        # Formats avec année
+        date_format_patterns = [
+            r'(\d{4})-(\d{2})-(\d{2})',  # 2023-04-20
+            r'(\d{2})-(\d{2})-(\d{4})',  # 01-01-2024
+            r'(\d{2})\s*([a-zéû]+)\s*(\d{4})'  # 20 avril 2023
+        ]
         
-        response = client.chat(
-            model='llama3.2',
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+        for pattern in date_format_patterns:
+            date_match = re.search(pattern, date_str, re.IGNORECASE)
+            if date_match:
+                # Extraction du mois et du jour selon le format
+                if pattern == r'(\d{4})-(\d{2})-(\d{2})':
+                    mois = int(date_match.group(2))
+                    jour = int(date_match.group(3))
+                elif pattern == r'(\d{2})-(\d{2})-(\d{4})':
+                    mois = int(date_match.group(2))
+                    jour = int(date_match.group(1))
+                else:
+                    jour = int(date_match.group(1))
+                    mois_str = date_match.group(2)
+                    mois = mois_mapping.get(mois_str.lower())
+                
+                return [mois, jour]
         
-        parsed_date = response.get('message', {}).get('content', '').strip()
+        # Formats textuels
+        jour_match = re.search(r'(\d+)(?:er)?', date_str)
+        mois_match = re.search(r'\b(' + '|'.join(mois_mapping.keys()) + r')\b', date_str)
         
-        # Extraction du jour et du mois
-        jour_match = re.search(r'\b(\d+)\b', parsed_date)
-        mois_match = re.search(r'\b(' + '|'.join(month_map.keys()) + r')\b', parsed_date.lower())
-        
-        if not (jour_match and mois_match):
-            raise ValueError(f"Impossible de parser la date via LLM : {parsed_date}")
-        
-        jour = int(jour_match.group(1))
-        mois = month_map[mois_match.group(1)]
-    
-    except Exception as e:
-        print(f"Erreur LLM : {e}. Utilisation de la méthode de secours.")
-        
-        # Méthode de secours locale
-        jour_match = re.search(r'\b(\d+)\b', date_str)
-        
-        mois_match = None
-        for month_key in month_map.keys():
-            if month_key in date_str.lower():
-                mois_match = month_key
-                break
-        
-        if not (jour_match and mois_match):
+        if not jour_match or not mois_match:
             raise ValueError(f"Format de date invalide : {date_str}")
         
         jour = int(jour_match.group(1))
-        mois = month_map[mois_match]
+        mois = mois_mapping[mois_match.group(1)]
+        
+        return [mois, jour]
     
-    # Calculer la position précise dans le mois
-    if 1 <= jour <= 10:
-        position = 0.0  # début du mois
-    elif 11 <= jour <= 20:
-        position = 0.5  # milieu du mois
-    else:
-        position = 1.0  # fin du mois
-    
-    print(f"Date analysée : {jour} {mois_match} -> Mois {mois}, Position {position}")
-    return (mois, position)
+    except Exception as e:
+        print(f"Erreur LLM : Impossible de parser la date via LLM : {date_str}. Utilisation de la méthode de secours.")
+        raise
 
 def parse_prompt_with_llm(client, prompt):
-    """
-    Analyse le prompt de manière intelligente en utilisant Ollama.
-    
-    Gère la création, suppression, et modification de projets.
-    """
-    # Prétraitement du prompt
-    prompt = prompt.lower().strip()
-    
-    # Cas de suppression directe
-    delete_match = re.search(r"delete\s*projet\s*['\"]([^'\"]+)['\"]", prompt)
-    if delete_match:
-        return {
-            'action': 'delete',
-            'task_name': delete_match.group(1)
-        }
-    
-    # Prompt pour l'analyse intelligente
-    llm_prompt = f"""
-    Tu es un assistant spécialisé dans l'analyse de prompts de gestion de projet.
-    Analyse le prompt suivant et réponds au format JSON avec précision :
-
-    Règles :
-    - Si le prompt concerne la création d'un projet, fournis :
-      * 'action': 'create'
-      * 'task_name': nom du projet
-      * 'start_date': date de début
-      * 'end_date': date de fin
-      * 'color': couleur du projet (optionnel)
-
-    - Si le prompt concerne la suppression d'un projet, fournis :
-      * 'action': 'delete'
-      * 'task_name': nom du projet à supprimer
-
-    - Si le prompt concerne la modification d'un projet, fournis :
-      * 'action': 'update'
-      * 'task_name': nom du projet à modifier
-      * 'start_date': nouvelle date de début (optionnel)
-      * 'end_date': nouvelle date de fin (optionnel)
-      * 'color': nouvelle couleur (optionnel)
-
-    Prompt à analyser : {prompt}
-    """
-    
     try:
+        # Prompt pour l'analyse intelligente
+        llm_prompt = f"""
+        Tu es un assistant spécialisé dans l'analyse de prompts de gestion de projet.
+        Analyse le prompt suivant et réponds au format JSON avec précision :
+
+        Règles :
+        - Si le prompt concerne la création d'un projet, fournis :
+          * 'action': 'create'
+          * 'task_name': nom du projet
+          * 'start_date': date de début
+          * 'end_date': date de fin
+          * 'color': couleur du projet (optionnel)
+
+        - Si le prompt concerne la suppression d'un projet, fournis :
+          * 'action': 'delete'
+          * 'task_name': nom du projet à supprimer
+
+        - Si le prompt concerne la modification d'un projet, fournis :
+          * 'action': 'update'
+          * 'task_name': nom du projet à modifier
+          * 'start_date': nouvelle date de début (optionnel)
+          * 'end_date': nouvelle date de fin (optionnel)
+          * 'color': nouvelle couleur (optionnel)
+
+        - Si le prompt concerne la réorganisation verticale des projets, fournis :
+          * 'action': 'reorder'
+          * 'task_name': nom du projet à repositionner
+          * 'second_project': nom du projet de référence (optionnel)
+          * 'position': 'first' ou 'before' selon la demande
+
+        Prompt à analyser : {prompt}
+        """
+        
         # Appel à l'API Ollama
         response = client.chat(
             model='llama3.2',
@@ -210,11 +192,51 @@ def parse_prompt_with_llm(client, prompt):
             ]
         )
         
-        # Extraction de la réponse JSON
-        task_info = json.loads(response.get('message', {}).get('content', '{}'))
+        # Vérification de la réponse
+        message_content = response.get('message', {}).get('content', '')
+        if not message_content:
+            raise ValueError("Aucune réponse valide du LLM")
+        
+        # Extraction du JSON à l'intérieur des backticks
+        json_match = re.search(r'```json\n(.*?)\n```', message_content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_str = message_content
+        
+        # Tentative de parsing JSON
+        try:
+            task_info = json.loads(json_str)
+        except json.JSONDecodeError:
+            # Log détaillé de l'erreur de parsing JSON
+            print(f"Erreur de parsing JSON. Contenu reçu : {json_str}")
+            raise ValueError(f"Impossible de parser la réponse JSON du LLM : {json_str}")
         
         # Traitement en fonction de l'action
-        if task_info.get('action') == 'delete':
+        if task_info.get('action') == 'reorder':
+            # Extraction du nom du projet à repositionner
+            reorder_match = re.search(r"(?:je veux que|placer|positionner)\s*(?:le)?\s*projet\s*['\"]([^'\"]+)['\"]\s*(?:soit|être)\s*(?:avant|premier|en premier|en haut)", prompt, re.IGNORECASE)
+            
+            if reorder_match:
+                first_project = reorder_match.group(1)
+            elif task_info.get('task_name'):
+                first_project = task_info['task_name']
+            else:
+                raise ValueError("Impossible d'extraire le nom du projet à repositionner")
+            
+            reorder_info = {
+                'action': 'reorder',
+                'first_project': first_project
+            }
+            
+            # Gestion optionnelle du projet de référence
+            if 'second_project' in task_info and task_info['second_project']:
+                reorder_info['second_project'] = task_info['second_project']
+            
+            return reorder_info
+        
+        # Autres actions (création, suppression, modification)
+        elif task_info.get('action') == 'delete':
             return {
                 'action': 'delete',
                 'task_name': task_info['task_name']
@@ -226,8 +248,8 @@ def parse_prompt_with_llm(client, prompt):
                 raise ValueError("Informations de projet incomplètes")
             
             # Convertir les dates en positions de mois
-            start_month = parse_date_to_month_position(client, task_info['start_date'])
-            end_month = parse_date_to_month_position(client, task_info['end_date'])
+            start_month = parse_date_to_month_position(client, task_info['start_date'])[0]
+            end_month = parse_date_to_month_position(client, task_info['end_date'])[0]
             
             # Mapping des couleurs
             color_map = {
@@ -244,8 +266,8 @@ def parse_prompt_with_llm(client, prompt):
             return {
                 'action': 'create',
                 'task_name': task_info['task_name'],
-                'start_month': start_month[0],  # Seulement le mois
-                'end_month': end_month[0],      # Seulement le mois
+                'start_month': start_month,
+                'end_month': end_month,
                 'color_rgb': color_map.get(task_info.get('color', 'bleu').lower(), [0, 0, 255])
             }
         
@@ -284,81 +306,13 @@ def parse_prompt_with_llm(client, prompt):
         else:
             raise ValueError(f"Action non reconnue : {task_info.get('action')}")
     
-    except json.JSONDecodeError:
-        # Tentative de parsing manuel si le JSON échoue
-        # Cas de création de projet
-        create_match = re.search(r"(?:je veux un|créer)\s*projet\s*['\"]([^'\"]+)['\"]\s*du\s*(\d+\s*\w+)\s*au\s*(\d+\s*\w+)(?:\s*\(couleur\s*:\s*(\w+)\))?", prompt, re.IGNORECASE)
-        if create_match:
-            task_name = create_match.group(1)
-            start_date = create_match.group(2)
-            end_date = create_match.group(3)
-            color = create_match.group(4) or 'bleu'
-            
-            return {
-                'action': 'create',
-                'task_name': task_name,
-                'start_month': parse_date_to_month_position(client, start_date)[0],
-                'end_month': parse_date_to_month_position(client, end_date)[0],
-                'color_rgb': {
-                    'rouge': [255, 0, 0],
-                    'bleu': [0, 0, 255],
-                    'vert': [0, 255, 0],
-                    'jaune': [255, 255, 0],
-                    'orange': [255, 165, 0],
-                    'violet': [128, 0, 128],
-                    'rose': [255, 192, 203],
-                    'marron': [165, 42, 42]
-                }.get(color.lower(), [0, 0, 255])
-            }
-        
-        # Cas de suppression de projet
-        delete_match = re.search(r"(?:delete|supprime(?:r)?)\s*(?:le)?\s*projet\s*['\"]([^'\"]+)['\"]", prompt, re.IGNORECASE)
-        if delete_match:
-            return {
-                'action': 'delete',
-                'task_name': delete_match.group(1)
-            }
-        
-        # Cas de modification de projet
-        update_match = re.search(r"(?:modifi(?:er|e)|modifier)\s*(?:le)?\s*projet\s*['\"]([^'\"]+)['\"]\s*(?:du\s*(\d+\s*\w+)\s*(?:au\s*(\d+\s*\w+))?)?(?:\s*(?:avec|en)\s*(\w+)\s*couleur?)?", prompt, re.IGNORECASE)
-        if update_match:
-            task_name = update_match.group(1)
-            start_date = update_match.group(2)
-            end_date = update_match.group(3)
-            color = update_match.group(4)
-            
-            update_info = {
-                'action': 'update',
-                'task_name': task_name
-            }
-            
-            if start_date:
-                update_info['start_month'] = parse_date_to_month_position(client, start_date)[0]
-            
-            if end_date:
-                update_info['end_month'] = parse_date_to_month_position(client, end_date)[0]
-            
-            if color:
-                color_map = {
-                    'rouge': [255, 0, 0],
-                    'bleu': [0, 0, 255],
-                    'vert': [0, 255, 0],
-                    'jaune': [255, 255, 0],
-                    'orange': [255, 165, 0],
-                    'violet': [128, 0, 128],
-                    'rose': [255, 192, 203],
-                    'marron': [165, 42, 42]
-                }
-                update_info['color_rgb'] = color_map.get(color.lower(), [0, 0, 255])
-            
-            return update_info
-        
-        print(f"Erreur : impossible de parser le prompt '{prompt}'")
-        raise ValueError(f"Format de prompt non reconnu : {prompt}")
-    
     except Exception as e:
+        # Log détaillé de l'erreur
         print(f"Erreur lors de l'analyse du prompt par l'IA : {e}")
-        raise ValueError(f"Impossible de parser le prompt : {prompt}")
+        print(f"Prompt original : {prompt}")
+        
+        # Relève l'exception pour arrêter le programme
+        raise
 
 def create_task_shape(slide, task_name, start_month, end_month, color_rgb, y_position=None, slide_width=None):
     """Crée une forme de tâche dans le slide"""
@@ -648,6 +602,69 @@ def create_roadmap_slide(prs, task_info):
         print(f"Nouveau mois de fin : {end_month}")
         print(f"Nouvelle couleur RGB : {color_rgb}")
     
+    elif task_info['action'] == 'reorder':
+        # Réorganisation verticale des projets
+        first_project = task_info['first_project']
+        second_project = task_info.get('second_project')
+        
+        print(f"Réorganisation verticale : Projet '{first_project}' en premier")
+        
+        # Récupérer toutes les formes de tâches
+        task_shapes = [
+            shape for shape in roadmap_slide.shapes 
+            if shape.has_text_frame and shape.text_frame.text != "ROADMAP"
+        ]
+        
+        # Trouver les formes des projets spécifiés
+        first_shape = None
+        second_shape = None
+        
+        for shape in task_shapes:
+            if first_project in shape.text_frame.text:
+                first_shape = shape
+            if second_project and second_project in shape.text_frame.text:
+                second_shape = shape
+        
+        if first_shape is None:
+            print(f"Erreur : Projet '{first_project}' non trouvé")
+            return roadmap_slide
+        
+        # Si second_project est None, on place first_project en premier
+        # Sinon, on place first_project avant second_project
+        
+        # Retirer first_shape de la liste
+        task_shapes.remove(first_shape)
+        
+        if second_project:
+            if second_shape is None:
+                print(f"Erreur : Projet '{second_project}' non trouvé")
+                return roadmap_slide
+            
+            # Trouver l'index de second_shape
+            second_index = task_shapes.index(second_shape)
+            
+            # Insérer first_shape avant second_shape
+            task_shapes.insert(second_index, first_shape)
+        else:
+            # Placer first_shape au début
+            task_shapes.insert(0, first_shape)
+        
+        # Repositionner toutes les tâches
+        def reposition_tasks(shapes):
+            # Trier les formes de tâches par position Y croissante
+            start_y = Inches(2.5)
+            task_height = Inches(0.6)  # Hauteur standard d'une tâche
+            spacing = Inches(0.2)  # Espacement minimal entre les tâches
+            
+            for shape in shapes:
+                # Repositionner la forme de tâche
+                shape.top = start_y
+                start_y += task_height + spacing
+        
+        reposition_tasks(task_shapes)
+        
+        print(f"Projet '{first_project}' repositionné avec succès !")
+        
     return roadmap_slide
 
 def main():
