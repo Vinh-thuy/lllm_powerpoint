@@ -351,6 +351,102 @@ def create_roadmap_slide(prs, task_info=None):
     
     return slide
 
+def normalize_text(text):
+    """
+    Normalise un texte en le nettoyant et le standardisant.
+    
+    Args:
+        text (str): Texte à normaliser
+    
+    Returns:
+        str: Texte normalisé
+    """
+    # Convertir en minuscules
+    text = text.lower()
+    
+    # Supprimer les espaces en début et fin
+    text = text.strip()
+    
+    # Remplacer les caractères spéciaux et multiples espaces
+    import re
+    text = re.sub(r'\s+', ' ', text)  # Remplacer les espaces multiples par un seul
+    text = re.sub(r'[^\w\s]', '', text)  # Supprimer la ponctuation
+    
+    return text
+
+def list_powerpoint_objects(file_path):
+    """
+    Liste tous les objets d'un fichier PowerPoint avec leurs labels.
+    
+    Args:
+        file_path (str): Chemin complet vers le fichier PowerPoint
+    
+    Returns:
+        list: Liste des textes normalisés trouvés dans le fichier PowerPoint
+    """
+    # Vérifier si le fichier existe
+    if not os.path.exists(file_path):
+        print(f"Erreur : Le fichier {file_path} n'existe pas.")
+        return []
+
+    # Charger la présentation
+    prs = Presentation(file_path)
+    
+    # Liste des objets à ignorer
+    ignored_objects = ['ROADMAP']
+    
+    # Liste pour stocker les objets
+    objects_list = []
+    
+    # Parcourir tous les slides
+    for slide_index, slide in enumerate(prs.slides, 1):
+        slide_objects = []
+        
+        # Parcourir les formes de chaque slide
+        for shape_index, shape in enumerate(slide.shapes, 1):
+            # Vérifier si la forme a un cadre de texte
+            if shape.has_text_frame:
+                # Extraire le texte du cadre
+                text = shape.text_frame.text.strip()
+                
+                # Ajouter le label si non vide et non ignoré
+                if text and text not in ignored_objects:
+                    slide_objects.append({
+                        'type': 'texte',
+                        'slide': slide_index,
+                        'index': shape_index,
+                        'text': text
+                    })
+            
+            # Vérifier si c'est un tableau
+            elif shape.has_table:
+                # Ignorer le tableau des mois
+                table = shape.table
+                first_row_texts = [cell.text.strip() for cell in table.rows[0].cells]
+                if not (len(first_row_texts) > 1 and all(len(month) == 3 for month in first_row_texts)):
+                    table_rows = []
+                    for row_index, row in enumerate(table.rows, 1):
+                        row_texts = [cell.text.strip() for cell in row.cells]
+                        if any(row_texts):
+                            table_rows.append({
+                                'row_index': row_index,
+                                'row_texts': row_texts
+                            })
+                    
+                    slide_objects.append({
+                        'type': 'tableau',
+                        'slide': slide_index,
+                        'index': shape_index,
+                        'rows': table_rows
+                    })
+        
+        # Ajouter les objets du slide à la liste principale si non vide
+        if slide_objects:
+            objects_list.extend(slide_objects)
+    
+    # Normaliser et retourner uniquement les textes
+    return [normalize_text(obj['text']) for obj in objects_list if obj['type'] == 'texte']
+
 def main():
     # Créer les dossiers de sortie
     templates_dir = "templates"
@@ -361,7 +457,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # Chemins complets
-    template_path = os.path.join(templates_dir, "roadmap_template.pptx")
+    template_path = os.path.join(templates_dir, "roadmap.pptx")
     output_path = os.path.join(output_dir, "roadmap.pptx")
     
     # Supprimer le fichier existant dans le répertoire de génération
@@ -388,6 +484,15 @@ def main():
     config = load_config()
     client = ollama.Client(host=config.get('ollama_host', 'http://localhost:11434'))
     
+
+    # ajouter ici un call vers la fonction list_powerpoint_objects du template qui peut ne pas etre vide
+    # Print les objets du fichier PowerPoint
+
+    print("\n--- Objets du fichier PowerPoint ---")
+    print("template_path : ", template_path)
+    objects = list_powerpoint_objects(template_path)
+    print("objects : ", objects)
+
     # Lire les prompts
     prompts = []
     
@@ -410,7 +515,32 @@ def main():
         print(f"\n--- Traitement du prompt : {prompt} ---")
         
         try:
+            # Analyser le prompt
             task_info = parse_project_prompt(client, prompt, config)
+            
+            # Vérifier si le nom de la tâche existe déjà dans les objets du PowerPoint
+            if 'task_name' in task_info:
+                normalized_task_name = normalize_text(task_info['task_name'])
+                if normalized_task_name in objects:
+                    print(f"task_name '{task_info['task_name']}' déjà présent dans le PPT")
+                    continue
+            
+            # Vérifier si les sous-tâches existent déjà
+            if 'tasks' in task_info:
+                existing_tasks = []
+                for task in task_info['tasks']:
+                    normalized_task_name = normalize_text(task['name'])
+                    if normalized_task_name in objects:
+                        print(f"task_name '{task['name']}' déjà présent dans le PPT")
+                        existing_tasks.append(task)
+                
+                # Supprimer les tâches existantes de task_info
+                if existing_tasks:
+                    task_info['tasks'] = [task for task in task_info['tasks'] if task not in existing_tasks]
+                
+                # Si toutes les tâches existaient, passer à l'itération suivante
+                if not task_info['tasks']:
+                    continue
             
             print('task_info 1 :', task_info)
             print('task_info TYPE 1 :', type(task_info))

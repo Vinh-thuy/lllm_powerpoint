@@ -27,126 +27,107 @@ def convert_color_to_rgb(color):
     }
     return color_map.get(color.lower(), [0, 0, 255])  # Bleu par défaut
 
-def parse_project_prompt(prompt):
+def parse_project_prompt(client, prompt, config):
     """
-    Analyse un prompt de projet en utilisant un modèle LLM Ollama
+    Analyse un prompt pour en extraire les informations de projet
     
     Args:
-        prompt (str): Prompt décrivant un projet
+        client (ollama.Client): Client Ollama pour générer la réponse
+        prompt (str): Prompt à analyser
+        config (dict): Configuration de l'application
     
     Returns:
-        dict: Informations structurées du projet
+        dict or list: Informations du/des projet(s)
     """
-    # Mapping des mois avec plusieurs variantes
-    mois_reference = {
-        0: 'jan|janvier',
-        1: 'fev|fevrier|février',
-        2: 'mar|mars',
-        3: 'avr|avril',
-        4: 'mai',
-        5: 'jun|juin',
-        6: 'jul|juillet',
-        7: 'aou|août|aout',
-        8: 'sep|septembre',
-        9: 'oct|octobre',
-        10: 'nov|novembre',
-        11: 'dec|decembre|décembre'
-    }
-    
-    # Configuration du prompt pour l'analyse
-    system_prompt = """
-    Tu es un assistant spécialisé dans l'analyse de prompts de projet.
-    Extrait les informations suivantes :
-    - Nom du projet
-    - Date de début (jour et mois)
-    - Date de fin (jour et mois)
-    - Couleur du projet
-    
-    Règles importantes :
-    - Le mois de janvier est 0
-    - Le mois de décembre est 11
-    - Vérifie attentivement le mois de fin
-    
-    Réponds UNIQUEMENT au format JSON suivant :
-    {
-        "task_name": "Nom du projet",
-        "start_month": [index_mois, position_dans_mois],
-        "end_month": [index_mois, position_dans_mois],
-        "color_rgb": [R, G, B]
-    }
-    
-    Règles pour la position dans le mois :
-    - 0.0 : début du mois (1-10)
-    - 0.5 : milieu du mois (11-20)
-    - 1.0 : fin du mois (21-31)
-    
-    Exemples :
-    Prompt: "je veux un projet 'P1' du 15 mai au 29 decembre (couleur : vert)"
-    Réponse: {
-        "task_name": "P1",
-        "start_month": [4, 0.5],
-        "end_month": [11, 1.0],
-        "color_rgb": [0, 255, 0]
-    }
+    # Prompt pour l'extraction des informations de projet
+    extraction_prompt = f"""
+    INSTRUCTIONS STRICTES POUR L'EXTRACTION DE PROJET :
+
+    1. Analyse le prompt suivant : "{prompt}"
+
+    2. FORMAT DE RÉPONSE OBLIGATOIRE :
+    - Un seul projet : {"task_name": "NomProjet", "start_month": [index_mois, position], "end_month": [index_mois, position], "color_rgb": [R,G,B]}
+    - Plusieurs projets : [{"task_name": "Projet1", ...}, {"task_name": "Projet2", ...}]
+
+    3. RÈGLES DE CONVERSION :
+    - Mois : janvier = 0, décembre = 11
+    - Position dans le mois : 0.0 = début, 0.5 = milieu, 1.0 = fin
+    - Couleur : Conversion RGB obligatoire
+
+    4. CONTRAINTES :
+    - JSON STRICTEMENT VALIDE
+    - Pas de texte supplémentaire
+    - Retourne [] si aucun projet
+
+    5. EXEMPLE COMPLET :
+    Prompt: "Projet ALPHA du 15 février au 30 juin en vert"
+    Réponse : [{"task_name": "ALPHA", "start_month": [1, 0.5], "end_month": [5, 1.0], "color_rgb": [0, 128, 0]}]
+
+    GÉNÈRE LA RÉPONSE MAINTENANT :
     """
-    
-    try:
-        # Appel au modèle Ollama
-        response = ollama.chat(
-            model='mervinpraison/llama3.2-3B-instruct-test-2:8b',
-            messages=[
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': prompt}
-            ]
-        )
-        
-        # Extraction du contenu de la réponse
-        result = response['message']['content'].strip()
-        
-        # Tentative de parsing JSON
-        try:
-            parsed_result = json.loads(result)
-            return parsed_result
-        except json.JSONDecodeError:
-            # Fallback : extraction par regex si JSON invalide
-            projet_match = re.search(r"'([^']+)'", prompt)
-            debut_match = re.search(r"du (\d+ \w+)", prompt)
-            fin_match = re.search(r"au (\d+ \w+)", prompt)
-            couleur_match = re.search(r"couleur\s*:\s*(\w+)", prompt, re.IGNORECASE)
-            
-            # Extraction du jour et du mois
-            def extraire_mois_et_position(date_match):
-                if not date_match:
-                    return [0, 0.5]  # Valeur par défaut
-                
-                jour_str, mois_str = date_match.group(1).split()
-                jour = int(jour_str)
-                
-                # Trouver le mois le plus proche
-                mois_index = trouver_mois_le_plus_proche(mois_str, mois_reference)
-                
-                # Déterminer la position dans le mois
-                if jour <= 10:
-                    position = 0.0
-                elif jour <= 20:
-                    position = 0.5
-                else:
-                    position = 1.0
-                
-                return [mois_index, position]
-            
-            # Couleur
-            couleur = couleur_match.group(1).lower() if couleur_match else "bleu"
-            
-            return {
-                "task_name": projet_match.group(1) if projet_match else "Projet sans nom",
-                "start_month": extraire_mois_et_position(debut_match),
-                "end_month": extraire_mois_et_position(fin_match),
-                "color_rgb": convert_color_to_rgb(couleur)
+
+    # Générer la réponse
+    response = client.chat(
+        model=config.get('OLLAMA_MODEL', 'llama2'),
+        messages=[
+            {
+                'role': 'system',
+                'content': 'Assistant spécialisé en extraction précise de projets.'
+            },
+            {
+                'role': 'user',
+                'content': extraction_prompt
             }
-    
+        ]
+    )
+
+    # Extraire le contenu de la réponse
+    content = response['message']['content'].strip()
+
+    # Fonction pour nettoyer et parser le JSON
+    def clean_and_parse_json(json_str):
+        # Supprimer les espaces et les caractères spéciaux avant et après
+        json_str = json_str.strip()
+        
+        # Supprimer les blocs de code markdown si présents
+        if json_str.startswith('```json') and json_str.endswith('```'):
+            json_str = json_str[7:-3].strip()
+        
+        # Essayer de parser le JSON
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            # Tentative de correction des erreurs courantes
+            try:
+                # Remplacer les guillemets droits par des guillemets simples
+                json_str = json_str.replace('"', '"').replace('"', '"')
+                return json.loads(json_str)
+            except:
+                return None
+
+    try:
+        # Essayer de parser le JSON
+        parsed_data = clean_and_parse_json(content)
+        
+        # Si c'est une liste, retourner le premier projet
+        if isinstance(parsed_data, list):
+            if parsed_data:
+                return parsed_data[0]
+            else:
+                print("Aucun projet trouvé dans le prompt.")
+                return None
+        
+        # Si c'est un dictionnaire, le retourner directement
+        elif isinstance(parsed_data, dict):
+            return parsed_data
+        
+        else:
+            print("Format de réponse invalide.")
+            return None
+
     except Exception as e:
-        print(f"Erreur lors de l'analyse du prompt : {e}")
+        print(f"Erreur inattendue : {e}")
+        print(f"Contenu problématique : {content}")
         return None
 
 def trouver_mois_le_plus_proche(mois_str, mois_reference):
@@ -160,7 +141,15 @@ def main():
     prompt = input("Entrez votre prompt de projet : ")
     
     try:
-        result = parse_project_prompt(prompt)
+        # Configuration de l'application
+        config = {
+            'OLLAMA_MODEL': 'mervinpraison/llama3.2-3B-instruct-test-2:8b'
+        }
+        
+        # Créer un client Ollama
+        client = ollama.Client()
+        
+        result = parse_project_prompt(client, prompt, config)
         
         print("\nRésultat :")
         
