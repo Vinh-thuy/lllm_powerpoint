@@ -1,14 +1,20 @@
-from flask import Flask
-import connexion
+from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
-import os
-from pptx import Presentation
-import ollama
+import socket
+import json
 from dotenv import load_dotenv
-import task_database as task_db
+from task_database import TaskDatabase
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_CONNECTOR
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.shapes import MSO_SHAPE
+import os
+import ollama
 import traceback
 import sys
-import json
 import yaml
 import base64
 import imghdr
@@ -16,34 +22,28 @@ from PIL import Image
 import re
 from datetime import datetime
 import pptx
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
-from pptx.enum.shapes import MSO_CONNECTOR
-from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.shapes import MSO_SHAPE
+from flask_restx import Api, Resource, fields
 
 # Charger les variables d'environnement du fichier .env
 load_dotenv()
 
-# Initialiser la base de données
-task_db = task_db.TaskDatabase()
+# Configuration Flask
+app = Flask(__name__)
+CORS(app)
 
-# Chargement de la configuration
-def load_config():
-    return {
-        'ollama_host': os.getenv('OLLAMA_HOST', 'http://localhost:11434'),
-        'model': os.getenv('MODEL', 'llama3')
-    }
+# Initialisation de la base de données
+task_db = TaskDatabase('tasks.db')
 
-# Création de l'application
-def create_app():
-    app = Flask(__name__)
-    CORS(app)
-    return app
+# Configuration Ollama
+ollama_config = {
+    'host': os.getenv('OLLAMA_HOST', 'http://localhost:11434'),
+    'model': os.getenv('OLLAMA_MODEL', 'llama3')
+}
 
-app = create_app()
+# Client Ollama
+ollama_client = ollama.Client(ollama_config['host'])
 
 # Définition de la fonction de conversion de couleur
 def convert_color_to_rgb(color):
@@ -437,8 +437,11 @@ def process_prompt_line(prompt_line):
     template_path = os.path.join(templates_dir, "roadmap.pptx")
     output_path = os.path.join(output_dir, "roadmap.pptx")
     
-    config = load_config()
-    client = ollama.Client(host=config.get('ollama_host', 'http://localhost:11434'))
+    config = {
+        'host': os.getenv('OLLAMA_HOST', 'http://localhost:11434'),
+        'model': os.getenv('OLLAMA_MODEL', 'llama3')
+    }
+    client = ollama.Client(config['host'])
     
     print(f"\n--- Traitement du prompt : {prompt_line} ---")
     
@@ -520,20 +523,82 @@ def update_presentation():
     prs.save(output_path)
     print(f"Présentation mise à jour : {output_path}")
 
+# Fonction pour trouver un port libre
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+    return port
+
+# Configuration de l'API
+api = Api(app,
+          version='1.0',
+          title='Roadmap API',
+          doc='/swagger-ui/',
+          validate=True)
+
+# Modèle de données
+prompt_model = api.model('Prompt', {
+    'prompt': fields.String(required=True, description='Description textuelle du projet')
+})
+
+# Namespace API
+ns = api.namespace('projects', description='Opérations sur les projets')
+
+@ns.route('/process_prompt')
+class ProcessPrompt(Resource):
+    @ns.expect(prompt_model)
+    @ns.response(200, 'Success')
+    @ns.response(400, 'Invalid request')
+    def post(self):
+        body = api.payload
+        
+        if 'prompt' not in body:
+            api.abort(400, 'Prompt manquant')
+        
+        prompt = body['prompt']
+        
+        try:
+            # ... logique existante de process_prompt() ...
+            task_info = process_prompt_line(prompt)
+            return {'message': 'Projet créé', 'task': task_info}, 200
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+# Routes
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/tasks')
+def get_tasks():
+    tasks = task_db.list_tasks()
+    lanes = {}
+    processed_tasks = []
+    
+    for task in tasks:
+        start = task['start_month']
+        end = task['end_month']
+        lane = 0
+        
+        while any(t['end_month'] > start and lanes.get(t['id'], -1) == lane 
+                 for t in processed_tasks):
+            lane += 1
+        
+        processed_tasks.append({**task, 'lane': lane})
+        lanes[task['id']] = lane
+    
+    return jsonify([{
+        'task_name': t['task_name'],
+        'start_percent': (t['start_month']/12)*100,
+        'duration_percent': ((t['end_month']-t['start_month'])/12)*100,
+        'color_rgb': json.loads(t['color_rgb']),
+        'lane': t['lane']
+    } for t in processed_tasks])
+
+# Lancement de l'application
 if __name__ == '__main__':
-    # Création de l'application Connexion
-    connexion_app = connexion.App(__name__, specification_dir='./')
-    
-    # Ajout de l'API avec resolver explicite
-    connexion_app.add_api(
-        'openapi_spec.yaml',
-        arguments={'title': 'API Roadmap Generator'},
-        pythonic_params=True,
-        resolver=connexion.resolver.RestyResolver('generate_roadmap')
-    )
-    
-    # Activation CORS
-    CORS(connexion_app.app)
-    
-    # Lancement du serveur
-    connexion_app.run(port=5001, debug=True)
+    free_port = find_free_port()
+    print(f"Démarrage du serveur sur le port {free_port}")
+    app.run(port=free_port, debug=True)

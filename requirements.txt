@@ -1,12 +1,13 @@
-python-pptx==0.6.21
-python-dotenv==1.0.0
-ollama==0.1.6
 flask==2.3.2
+python-dotenv==1.0.0
+connexion[swagger-ui]==2.14.2
 flask-cors==4.0.0
+python-pptx==0.6.21
+ollama==0.1.6
+bootstrap5==23.3
 SQLAlchemy==2.0.19
 Pillow==10.0.0
 python-multipart==0.0.6
-connexion[swagger-ui]==2.14.2
 Werkzeug==2.3.8
 pyyaml==6.0.1
 requests>=2.31.0

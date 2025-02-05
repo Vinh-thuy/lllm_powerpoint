@@ -1,12 +1,13 @@
 openapi: 3.0.0
 info:
-  title: API Roadmap Generator
+  title: API Générateur de Roadmap
   version: 1.0.0
 
 paths:
   /process_prompt:
     post:
       operationId: process_prompt
+      summary: Traitement d'un nouveau projet
       requestBody:
         required: true
         content:
@@ -20,7 +21,16 @@ paths:
                 - prompt
       responses:
         '200':
-          description: Tâche traitée avec succès
+          description: Projet traité avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  task:
+                    type: object
         '400':
           description: Requête invalide
         '500':
