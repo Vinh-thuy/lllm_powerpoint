@@ -67,6 +67,8 @@ def parse_project_prompt(client, prompt, config):
         # Prompt système pour l'analyse
         system_prompt = """
         Tu es un assistant spécialisé dans l'analyse de prompts de projet.
+        Tu dois identifier si le prompt est une création ou une mise à jour de projet
+
         Extrait les informations suivantes :
         - Nom du projet
         - Date de début (jour et mois)
@@ -77,9 +79,11 @@ def parse_project_prompt(client, prompt, config):
         - Le mois de janvier est 0
         - Le mois de décembre est 11
         - Vérifie attentivement le mois de fin
+
         
         Réponds UNIQUEMENT au format JSON suivant :
         {
+            "type": "create|update",
             "task_name": "Nom du projet",
             "start_month": [index_mois, position_dans_mois],
             "end_month": [index_mois, position_dans_mois],
@@ -94,10 +98,20 @@ def parse_project_prompt(client, prompt, config):
         Exemples :
         Prompt: "je veux un projet 'P1' du 15 mai au 29 decembre (couleur : vert)"
         Réponse: {
+            "type": "create",
             "task_name": "P1",
             "start_month": [4, 0.5],
             "end_month": [11, 1.0],
             "color_rgb": [0, 255, 0]
+        }
+        
+        Prompt: "je veux modifier le projet 'P1' pour qu'il commence le 1er juin"
+        Réponse: {
+            "type": "update",
+            "task_name": "P1",
+            "start_month": [5, 0.0],
+            "end_month": null,
+            "color_rgb": null
         }
         """
         
@@ -127,13 +141,15 @@ def parse_project_prompt(client, prompt, config):
             parsed_res = json.loads(result)
             
             # Vérifier que le JSON contient les clés requises
-            required_keys = ['task_name', 'start_month', 'end_month', 'color_rgb']
+            required_keys = ['type', 'task_name']
             if not all(key in parsed_res for key in required_keys):
                 raise ValueError("JSON incomplet")
             
-            print('parsed_res : ', parsed_res)
-            print('parsed_res TYPE : ', type(parsed_res))
-            
+            # Gérer les cas de mise à jour et de création
+            if parsed_res['type'] == 'update':
+                # Supprimer les clés avec des valeurs null
+                parsed_res = {k: v for k, v in parsed_res.items() if v is not None}
+                                        
             return parsed_res
         
         except json.JSONDecodeError as e:
@@ -517,6 +533,7 @@ def main():
         try:
             # Analyser le prompt
             task_info = parse_project_prompt(client, prompt, config)
+        
             
             # Vérifier si le nom de la tâche existe déjà dans les objets du PowerPoint
             if 'task_name' in task_info:
@@ -541,10 +558,7 @@ def main():
                 # Si toutes les tâches existaient, passer à l'itération suivante
                 if not task_info['tasks']:
                     continue
-            
-            print('task_info 1 :', task_info)
-            print('task_info TYPE 1 :', type(task_info))
-            
+                        
             if task_info:
                 # Créer ou mettre à jour le slide de roadmap
                 create_roadmap_slide(prs, task_info)
