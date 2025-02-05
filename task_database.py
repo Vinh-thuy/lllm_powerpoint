@@ -37,8 +37,8 @@ class TaskDatabase:
             
             # Vérifier et ajouter les colonnes start_date, end_date et raw_prompt
             columns_to_add = [
-                ('start_date', 'TEXT'),
-                ('end_date', 'TEXT'),
+                ('start_date', 'DATETIME'),
+                ('end_date', 'DATETIME'),
                 ('raw_prompt', 'TEXT')
             ]
             
@@ -121,49 +121,61 @@ class TaskDatabase:
             # Préparer les valeurs
             task_name = task_info.get('task_name', 'Unnamed Task')
             
-            # Extraire start_month et end_month
-            start_month = task_info.get('start_month', [None, None])
-            end_month = task_info.get('end_month', [None, None])
-            
-            # Extraire start_date et end_date
-            start_date = task_info.get('start_date', None)
-            end_date = task_info.get('end_date', None)
-            
             # Convertir color_rgb en chaîne JSON si nécessaire
             color_rgb = (json.dumps(task_info['color_rgb']) 
                          if 'color_rgb' in task_info and task_info['color_rgb'] is not None 
                          else None)
             
             # Vérifier si la tâche existe déjà
-            cursor.execute('SELECT id FROM tasks WHERE task_name = ?', (task_name,))
+            cursor.execute('SELECT * FROM tasks WHERE task_name = ?', (task_name,))
             existing_task = cursor.fetchone()
             
             if existing_task:
-                # Mettre à jour la tâche existante
-                cursor.execute('''
-                    UPDATE tasks 
-                    SET start_month = ?, start_position = ?, 
-                        end_month = ?, end_position = ?, 
-                        color_rgb = ?,
-                        start_date = ?,
-                        end_date = ?,
-                        raw_prompt = ?,
-                        created_at = CURRENT_TIMESTAMP
-                    WHERE task_name = ?
-                ''', (
-                    start_month[0] if start_month[0] is not None else None, 
-                    start_month[1] if start_month[1] is not None else None,
-                    end_month[0] if end_month[0] is not None else None, 
-                    end_month[1] if end_month[1] is not None else None,
-                    color_rgb,
-                    start_date,
-                    end_date,
-                    raw_prompt,
-                    task_name
-                ))
-                task_id = existing_task[0]
+                # Préparer les colonnes à mettre à jour
+                update_fields = {}
+                
+                # Colonnes possibles à mettre à jour
+                columns_mapping = {
+                    'start_month': task_info.get('start_month', [None, None])[0],
+                    'start_position': task_info.get('start_month', [None, None])[1],
+                    'end_month': task_info.get('end_month', [None, None])[0],
+                    'end_position': task_info.get('end_month', [None, None])[1],
+                    'color_rgb': color_rgb,
+                    'start_date': task_info.get('start_date'),
+                    'end_date': task_info.get('end_date'),
+                    'raw_prompt': raw_prompt
+                }
+                
+                # Ne conserver que les valeurs non-None
+                update_fields = {k: v for k, v in columns_mapping.items() if v is not None}
+                
+                if update_fields:
+                    # Construire la requête de mise à jour
+                    set_clause = ", ".join([f"{col} = ?" for col in update_fields.keys()])
+                    update_query = f"""
+                        UPDATE tasks 
+                        SET {set_clause}, created_at = CURRENT_TIMESTAMP
+                        WHERE task_name = ?
+                    """
+                    
+                    # Préparer les valeurs
+                    update_values = list(update_fields.values()) + [task_name]
+                    
+                    cursor.execute(update_query, update_values)
+                    task_id = existing_task[0]
+                else:
+                    # Aucune mise à jour n'est nécessaire
+                    task_id = existing_task[0]
+            
             else:
                 # Insérer une nouvelle tâche
+                start_month = task_info.get('start_month', [None, None])
+                end_month = task_info.get('end_month', [None, None])
+                
+                # Extraire start_date et end_date
+                start_date = task_info.get('start_date', None)
+                end_date = task_info.get('end_date', None)
+                
                 cursor.execute('''
                     INSERT INTO tasks (
                         task_name, 
@@ -224,7 +236,7 @@ class TaskDatabase:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            cursor.execute('SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?', (limit,))
+            cursor.execute('SELECT * FROM tasks ORDER BY start_date ASC LIMIT ?', (limit,))
             rows = cursor.fetchall()
             
             return [dict(row) for row in rows]

@@ -267,6 +267,14 @@ def create_task_on_roadmap(prs, task_info):
     end_month = task_info['end_month'][0] if isinstance(task_info['end_month'], (list, tuple)) else task_info['end_month']
     end_pos = task_info['end_month'][1] if isinstance(task_info['end_month'], (list, tuple)) else 1.0
     
+    # Valeurs par défaut si None
+    start_month = 0 if start_month is None else start_month
+    end_month = 11 if end_month is None else end_month
+    
+    # Valeurs par défaut pour les positions
+    start_pos = 0.5 if start_pos is None else start_pos
+    end_pos = 1.0 if end_pos is None else end_pos
+    
     color_rgb = task_info['color_rgb']         # Couleur RGB
 
     # Récupération du slide de roadmap
@@ -290,6 +298,8 @@ def create_task_on_roadmap(prs, task_info):
     month_width = grid_width / 12
 
     # Calculer la position horizontale de début et de fin
+    print(f"start_month : {start_month}, start_pos : {start_pos}")
+    print(f"end_month : {end_month}, end_pos : {end_pos}")
     start_x = grid_margin_left + (start_month * month_width) + (start_pos * month_width)
     end_x = grid_margin_left + (end_month * month_width) + (end_pos * month_width)
 
