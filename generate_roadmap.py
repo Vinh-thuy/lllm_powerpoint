@@ -22,6 +22,9 @@ import sys
 # Charger les variables d'environnement du fichier .env
 load_dotenv()
 
+# Initialiser la base de données
+from task_database import TaskDatabase
+task_db = TaskDatabase()
 
 def convert_color_to_rgb(color):
     """
@@ -86,7 +89,9 @@ def parse_project_prompt(client, prompt, config):
             "type": "create|update",
             "task_name": "Nom du projet",
             "start_month": [index_mois, position_dans_mois],
+            "start_date": "YYYY/MM/DD",
             "end_month": [index_mois, position_dans_mois],
+            "end_date": "YYYY/MM/DD",
             "color_rgb": [R, G, B]
         }
         
@@ -101,16 +106,32 @@ def parse_project_prompt(client, prompt, config):
             "type": "create",
             "task_name": "P1",
             "start_month": [4, 0.5],
+            "start_date": "2025/05/15",
             "end_month": [11, 1.0],
+            "end_date": "2025/12/29",
             "color_rgb": [0, 255, 0]
         }
-        
+
+        Prompt: "j
+        je veux un projet 'P1' du 25 mars au 3 aout (couleur : vert)"
+        Réponse: {
+            "type": "create",
+            "task_name": "P1",
+            "start_month": [2, 1.0],
+            "start_date": "2025/03/25",
+            "end_month": [7, 0.0],
+            "end_date": "2025/08/03",
+            "color_rgb": [0, 255, 0]
+        }        
+
         Prompt: "je veux modifier le projet 'P1' pour qu'il commence le 1er juin"
         Réponse: {
             "type": "update",
             "task_name": "P1",
             "start_month": [5, 0.0],
+            "start_date": "2025/06/01",
             "end_month": null,
+            "end_date": null,
             "color_rgb": null
         }
         """
@@ -367,6 +388,35 @@ def create_roadmap_slide(prs, task_info=None):
     
     return slide
 
+def convert_db_task_to_task_info(db_task):
+    """
+    Convertit une tâche de la base de données en task_info.
+    
+    Args:
+        db_task (dict): Tâche récupérée de la base de données
+    
+    Returns:
+        dict: Tâche au format task_info
+    """
+    # Convertir color_rgb de JSON à liste si nécessaire
+    color_rgb = json.loads(db_task['color_rgb']) if db_task['color_rgb'] else None
+    
+    task_info = {
+        "type": "create",  # Par défaut, toujours "create"
+        "task_name": db_task['task_name'],
+        "start_month": [
+            db_task['start_month'] if db_task['start_month'] is not None else None,
+            db_task['start_position'] if db_task['start_position'] is not None else 0.5
+        ],
+        "end_month": [
+            db_task['end_month'] if db_task['end_month'] is not None else None,
+            db_task['end_position'] if db_task['end_position'] is not None else 1.0
+        ],
+        "color_rgb": color_rgb
+    }
+    
+    return task_info
+
 def normalize_text(text):
     """
     Normalise un texte en le nettoyant et le standardisant.
@@ -500,16 +550,7 @@ def main():
     config = load_config()
     client = ollama.Client(host=config.get('ollama_host', 'http://localhost:11434'))
     
-
-    # ajouter ici un call vers la fonction list_powerpoint_objects du template qui peut ne pas etre vide
-    # Print les objets du fichier PowerPoint
-
-    print("\n--- Objets du fichier PowerPoint ---")
-    print("template_path : ", template_path)
-    objects = list_powerpoint_objects(template_path)
-    print("objects : ", objects)
-
-    # Lire les prompts
+    # Traitement des prompts
     prompts = []
     
     # Vérifier si des arguments en ligne de commande sont passés
@@ -533,45 +574,36 @@ def main():
         try:
             # Analyser le prompt
             task_info = parse_project_prompt(client, prompt, config)
-        
             
-            # Vérifier si le nom de la tâche existe déjà dans les objets du PowerPoint
-            if 'task_name' in task_info:
-                normalized_task_name = normalize_text(task_info['task_name'])
-                if normalized_task_name in objects:
-                    print(f"task_name '{task_info['task_name']}' déjà présent dans le PPT")
-                    continue
-            
-            # Vérifier si les sous-tâches existent déjà
-            if 'tasks' in task_info:
-                existing_tasks = []
-                for task in task_info['tasks']:
-                    normalized_task_name = normalize_text(task['name'])
-                    if normalized_task_name in objects:
-                        print(f"task_name '{task['name']}' déjà présent dans le PPT")
-                        existing_tasks.append(task)
-                
-                # Supprimer les tâches existantes de task_info
-                if existing_tasks:
-                    task_info['tasks'] = [task for task in task_info['tasks'] if task not in existing_tasks]
-                
-                # Si toutes les tâches existaient, passer à l'itération suivante
-                if not task_info['tasks']:
-                    continue
-                        
             if task_info:
-                # Créer ou mettre à jour le slide de roadmap
-                create_roadmap_slide(prs, task_info)
+                # Insérer ou mettre à jour la tâche dans la base de données
+                task_id = task_db.upsert_task(task_info, raw_prompt=prompt)
+                print(f"Tâche créée ou mise à jour avec l'ID : {task_id}")
                 
-                # Sauvegarder la présentation après chaque prompt
-                prs.save(output_path)
-                print(f"Présentation mise à jour : {output_path}")
             else:
                 print("Impossible de parser le prompt")
         
         except Exception as e:
             print(f"Erreur lors du traitement du prompt '{prompt}' : {e}")
             traceback.print_exc()
+    
+    # Récupérer toutes les tâches de la base de données
+    all_tasks = task_db.list_tasks()
+    
+    # Réinitialiser la présentation
+    prs = Presentation(template_path)
+    
+    # Recréer la slide avec toutes les tâches
+    for task in all_tasks:
+        # Convertir la tâche de la base de données en task_info
+        task_info = convert_db_task_to_task_info(task)
+        
+        # Créer ou mettre à jour le slide de roadmap
+        create_roadmap_slide(prs, task_info)
+    
+    # Sauvegarder la présentation finale
+    prs.save(output_path)
+    print(f"Présentation finale mise à jour : {output_path}")
     
     print("\nTraitement de tous les prompts terminé.")
 

@@ -1,4 +1,3 @@
-
-je veux un projet 'R1' du 28 juillet au 10 decembre (couleur : rouge)
-je veux un projet 'qsqsc' du 1 janveir au 15 mars (couleur : bleu)
-je veux un projet 'P1' du 15 mai au 29 decembre (couleur : vert)
+je veux un projet 'CR1' du 1 juillet au 7 septembre (couleur : rouge)
+je veux un projet 'CR2' du 1 janvier au 4 mars (couleur : bleu)
+je veux un projet 'P4' du 15 mai au 4 decembre (couleur : vert)

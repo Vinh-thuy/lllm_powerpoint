@@ -22,6 +22,151 @@ import sys
 # Charger les variables d'environnement du fichier .env
 load_dotenv()
 
+# Initialiser la base de données
+from task_database import TaskDatabase
+task_db = TaskDatabase()
+
+def convert_color_to_rgb(color):
+    """
+    Convertit un nom de couleur en code RGB
+    
+    Args:
+        color (str): Nom de la couleur
+    
+    Returns:
+        list: Code RGB de la couleur
+    """
+    color_map = {
+        'rouge': [255, 0, 0],
+        'bleu': [0, 0, 255],
+        'vert': [0, 255, 0],
+        'jaune': [255, 255, 0],
+        'orange': [255, 165, 0],
+        'violet': [128, 0, 128],
+        'rose': [255, 192, 203],
+        'marron': [165, 42, 42],
+        'gris': [128, 128, 128],
+        'noir': [0, 0, 0],
+        'blanc': [255, 255, 255]
+    }
+    return color_map.get(color.lower(), [0, 0, 255])  # Bleu par défaut
+
+def parse_project_prompt(client, prompt, config):
+    """
+    Analyse un prompt de projet en utilisant un modèle LLM Ollama
+    
+    Args:
+        client: Client Ollama
+        prompt (str): Prompt décrivant un projet
+        config (dict): Configuration du modèle
+    
+    Returns:
+        dict: Informations structurées du projet
+    """
+    try:
+        # Configuration du modèle
+        model = config.get('llm_model', 'mervinpraison/llama3.2-3B-instruct-test-2:8b')
+        
+        # Prompt système pour l'analyse
+        system_prompt = """
+        Tu es un assistant spécialisé dans l'analyse de prompts de projet.
+        Tu dois identifier si le prompt est une création ou une mise à jour de projet
+
+        Extrait les informations suivantes :
+        - Nom du projet
+        - Date de début (jour et mois)
+        - Date de fin (jour et mois)
+        - Couleur du projet
+        
+        Règles importantes :
+        - Le mois de janvier est 0
+        - Le mois de décembre est 11
+        - Vérifie attentivement le mois de fin
+
+        
+        Réponds UNIQUEMENT au format JSON suivant :
+        {
+            "type": "create|update",
+            "task_name": "Nom du projet",
+            "start_month": [index_mois, position_dans_mois],
+            "end_month": [index_mois, position_dans_mois],
+            "color_rgb": [R, G, B]
+        }
+        
+        Règles pour la position dans le mois :
+        - 0.0 : début du mois (1-10)
+        - 0.5 : milieu du mois (11-20)
+        - 1.0 : fin du mois (21-31)
+        
+        Exemples :
+        Prompt: "je veux un projet 'P1' du 15 mai au 29 decembre (couleur : vert)"
+        Réponse: {
+            "type": "create",
+            "task_name": "P1",
+            "start_month": [4, 0.5],
+            "end_month": [11, 1.0],
+            "color_rgb": [0, 255, 0]
+        }
+        
+        Prompt: "je veux modifier le projet 'P1' pour qu'il commence le 1er juin"
+        Réponse: {
+            "type": "update",
+            "task_name": "P1",
+            "start_month": [5, 0.0],
+            "end_month": null,
+            "color_rgb": null
+        }
+        """
+        
+        # Appel au modèle Ollama
+        response = client.chat(
+            model=model,
+            messages=[
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': prompt}
+            ]
+        )
+        
+        # Extraction du contenu de la réponse
+        result = response['message']['content'].strip()
+
+        # Tenter de parser le résultat comme un JSON
+        try:
+            # Nettoyer le résultat des éventuels caractères superflus
+            # Rechercher le premier et le dernier caractère JSON
+            start_index = result.find('{')
+            end_index = result.rfind('}') + 1
+            
+            if start_index != -1 and end_index != -1:
+                result = result[start_index:end_index]
+            
+            # Parser le JSON
+            parsed_res = json.loads(result)
+            
+            # Vérifier que le JSON contient les clés requises
+            required_keys = ['type', 'task_name']
+            if not all(key in parsed_res for key in required_keys):
+                raise ValueError("JSON incomplet")
+            
+            # Gérer les cas de mise à jour et de création
+            if parsed_res['type'] == 'update':
+                # Supprimer les clés avec des valeurs null
+                parsed_res = {k: v for k, v in parsed_res.items() if v is not None}
+                                        
+            return parsed_res
+        
+        except json.JSONDecodeError as e:
+            print(f"Erreur de décodage JSON : {e}")
+            print(f"Contenu problématique : {result}")
+            return None
+        except ValueError as e:
+            print(f"Erreur de validation JSON : {e}")
+            return None
+    
+    except Exception as e:
+        print(f"Erreur lors de l'analyse du prompt : {e}")
+        return None
+
 def load_config():
     with open('config.yaml', 'r') as f:
         return yaml.safe_load(f)
@@ -79,231 +224,86 @@ def analyze_image_with_vision(client, image_path):
         print(f"Erreur détaillée lors de l'analyse de l'image : {type(e).__name__} - {str(e)}")
         return None
 
-def parse_date_to_month_position(client, date_str, config=None):
-    """
-    Convertit une date en position de mois sur la timeline
-    
-    Args:
-        client: Client Ollama
-        date_str (str): Chaîne représentant la date
-        config (dict, optional): Configuration du projet
-    
-    Returns:
-        tuple: (mois, position_dans_le_mois)
-    """
-    # Dictionnaire de mapping des mois
-    mois_mapping = {
-        'janvier': 0, 'jan': 0, 
-        'février': 1, 'fevrier': 1, 'fev': 1,
-        'mars': 2, 'mar': 2,
-        'avril': 3, 'avr': 3,
-        'mai': 4,
-        'juin': 5, 'jun': 5,
-        'juillet': 6, 'jul': 6,
-        'août': 7, 'aout': 7, 'aug': 7,
-        'septembre': 8, 'sep': 8,
-        'octobre': 9, 'oct': 9,
-        'novembre': 10, 'nov': 10,
-        'décembre': 11, 'decembre': 11, 'dec': 11
-    }
-    
-    # Nettoyer et normaliser la date
-    date_str = date_str.lower().strip()
-    
-    # Extraire le jour et le mois
-    jour_match = re.search(r'(\d+)', date_str)
-    mois_match = re.search(r'(janvier|jan|février|fevrier|fev|mars|avril|avr|mai|juin|jul|août|aout|septembre|sep|octobre|oct|novembre|nov|décembre|decembre|dec)', date_str, re.IGNORECASE)
-    
-    # Valeurs par défaut
-    jour = 1
-    mois_index = 0
-    
-    # Extraire le jour si présent
-    if jour_match:
-        try:
-            jour = int(jour_match.group(1))
-        except ValueError:
-            jour = 1
-    
-    # Extraire le mois
-    if mois_match:
-        mois = mois_match.group(1).lower()
-        for key, value in mois_mapping.items():
-            if mois in key:
-                mois_index = value
-                break
-    
-    # Calculer la position dans le mois (début, milieu, fin)
-    if jour <= 10:
-        position_mois = 0.0  # début du mois
-    elif jour <= 20:
-        position_mois = 0.5  # milieu du mois
-    else:
-        position_mois = 1.0  # fin du mois
-    
-    print(f"Analyse de la date : {date_str}")
-    print(f"  Jour extrait : {jour}")
-    print(f"  Mois extrait : {mois}")
-    print(f"  Index du mois : {mois_index}")
-    print(f"  Position dans le mois : {position_mois}")
-    
-    return (mois_index, position_mois)
 
-def parse_prompt_with_llm(client, prompt, config):
-    """Analyse le prompt pour extraire les informations de la tâche"""
-    # Liste des modèles à essayer
-    models_to_try = [
-        config.get('llm_model', 'mervinpraison/llama3.2-3B-instruct-test-2:8b'),
-    ]
-    
-    for model in models_to_try:
-        try:
-            print(f"Tentative avec le modèle : {model}")
-            
-            response = client.chat(
-                model=model,
-                messages=[
-                    {
-                        'role': 'system', 
-                        'content': """Tu es un assistant spécialisé dans l'analyse de prompts de projet. 
-                        Pour chaque prompt, réponds avec les informations suivantes :
-                        - Nom du projet
-                        - Date de début
-                        - Date de fin
-                        - Couleur (optionnelle)
-                        
-                        Exemple de format de réponse :
-                        Projet: [Nom du projet]
-                        Début: [Date de début]
-                        Fin: [Date de fin]
-                        Couleur: [Couleur (optionnelle)]"""
-                    },
-                    {
-                        'role': 'user', 
-                        'content': prompt
-                    }
-                ]
-            )
-            
-            result = response['message']['content'].strip()
-            print("Réponse du modèle :", result)  # Ajout de debug
-            
-            # Extraction des informations de base
-            name_match = re.search(r"Projet:\s*([^\n]+)", result, re.IGNORECASE)
-            start_date_match = re.search(r"Début:\s*([^\n]+)", result, re.IGNORECASE)
-            end_date_match = re.search(r"Fin:\s*([^\n]+)", result, re.IGNORECASE)
-            color_match = re.search(r"Couleur:\s*([^\n]+)", result, re.IGNORECASE)
-            
-            if not (name_match and start_date_match and end_date_match):
-                # Fallback à l'extraction depuis le prompt original
-                name_match = re.search(r"projet '([^']+)'", prompt)
-                start_date_match = re.search(r"du (\d+\s*\w+)", prompt)
-                end_date_match = re.search(r"au (\d+\s*\w+)", prompt)
-                color_match = re.search(r"couleur\s*:\s*(\w+)", prompt, re.IGNORECASE)
-            
-            if not (name_match and start_date_match and end_date_match):
-                print(f"Format de prompt invalide pour le modèle {model}")
-                continue
-            
-            # Extraire les informations
-            task_name = name_match.group(1).strip()
-            start_date = start_date_match.group(1).strip()
-            end_date = end_date_match.group(1).strip()
-            
-            # Couleur par défaut
-            color = color_match.group(1).lower().strip() if color_match else "bleu"
-            
-            # Convertir les dates en positions de mois
-            start_month = parse_date_to_month_position(client, start_date, config)
-            end_month = parse_date_to_month_position(client, end_date, config)
-            
-            # Mapping des couleurs
-            color_map = {
-                'rouge': [255, 0, 0],
-                'bleu': [0, 0, 255],
-                'vert': [0, 255, 0],
-                'jaune': [255, 255, 0],
-                'orange': [255, 165, 0],
-                'violet': [128, 0, 128],
-                'rose': [255, 192, 203],
-                'marron': [165, 42, 42]
-            }
-            
-            return {
-                'task_name': task_name,
-                'start_month': start_month,
-                'end_month': end_month,
-                'color_rgb': color_map.get(color, [0, 0, 255])  # Bleu par défaut
-            }
-        
-        except Exception as e:
-            print(f"Erreur avec le modèle {model}: {e}")
-            continue
-    
-    print("Aucun modèle n'a pu traiter le prompt")
-    return None
+
+
 
 def create_task_on_roadmap(prs, task_info):
     """
-    Crée une tâche sur la roadmap PowerPoint
+    Crée une tâche sur la roadmap
     
     Args:
         prs (Presentation): Présentation PowerPoint
         task_info (dict): Informations de la tâche
     """
-    # Récupérer le slide de roadmap (premier slide)
-    slide = prs.slides[0]
+    # Débogage : afficher le contenu complet de task_info
+    print("DEBUG - task_info complet :", json.dumps(task_info, indent=2))
     
+    # Extraction des informations de la tâche
+    task_name = task_info['task_name']
+    
+    # Convertir les tuples en listes si nécessaire
+    start_month = task_info['start_month'][0] if isinstance(task_info['start_month'], (list, tuple)) else task_info['start_month']
+    start_pos = task_info['start_month'][1] if isinstance(task_info['start_month'], (list, tuple)) else 0.5
+    
+    end_month = task_info['end_month'][0] if isinstance(task_info['end_month'], (list, tuple)) else task_info['end_month']
+    end_pos = task_info['end_month'][1] if isinstance(task_info['end_month'], (list, tuple)) else 1.0
+    
+    color_rgb = task_info['color_rgb']         # Couleur RGB
+
+    # Récupération du slide de roadmap
+    roadmap_slide = prs.slides[0]  # Première slide (roadmap)
+
     # Dimensions de la slide
     slide_width = prs.slide_width
     slide_height = prs.slide_height
-    
-    # Dimensions effectives de la grille
-    grid_margin_x = Inches(0.5)
-    grid_width = slide_width - (2 * grid_margin_x)
-    
-    # Calculer les positions de début et de fin
-    start_month, start_pos = task_info['start_month']
-    end_month, end_pos = task_info['end_month']
-    
-    # Ajuster la position précise dans le mois
+
+    # Dimensions de la grille
+    grid_margin_top = Inches(1.5)  # Marge en haut
+    grid_margin_bottom = Inches(0.5)  # Marge en bas
+    grid_margin_left = Inches(0.5)  # Marge à gauche
+    grid_margin_right = Inches(0.5)  # Marge à droite
+
+    # Calculer la hauteur de la grille
+    grid_height = slide_height - grid_margin_top - grid_margin_bottom
+    grid_width = slide_width - grid_margin_left - grid_margin_right
+
+    # Calculer la largeur d'une colonne de mois
     month_width = grid_width / 12
+
+    # Calculer la position horizontale de début et de fin
+    start_x = grid_margin_left + (start_month * month_width) + (start_pos * month_width)
+    end_x = grid_margin_left + (end_month * month_width) + (end_pos * month_width)
+
+    # Hauteur de la tâche
+    task_height = Inches(0.5)
     
-    start_x = grid_margin_x + (start_month * month_width) + (start_pos * month_width)
-    end_x = grid_margin_x + ((end_month + 1) * month_width) - ((1 - end_pos) * month_width)
+    # Calculer la position verticale dynamique
+    existing_shapes = [shape for shape in roadmap_slide.shapes if shape.has_text_frame]
     
-    # Largeur de la tâche
-    task_width = max(end_x - start_x, Inches(0.5))  # Largeur minimale
-    
-    # Calculer la position Y
-    existing_shapes = [shape for shape in slide.shapes if shape.has_text_frame]
-    y_position = Inches(2.5 + (len(existing_shapes) * 0.6))
-    
+    # Décaler vers le bas (0.5 inch sous l'axe des mois)
+    task_y = grid_margin_top + Inches(0.5) + (len(existing_shapes) * Inches(0.6))
+
     # Créer la forme de la tâche
-    task_shape = slide.shapes.add_shape(
+    task_shape = roadmap_slide.shapes.add_shape(
         MSO_AUTO_SHAPE_TYPE.RECTANGLE, 
         start_x, 
-        y_position, 
-        task_width, 
-        Inches(0.4)
+        task_y, 
+        end_x - start_x, 
+        task_height
     )
-    
-    # Couleur de la tâche
+
+    # Formater la forme
     task_shape.fill.solid()
-    task_shape.fill.fore_color.rgb = RGBColor(*task_info['color_rgb'])
-    
+    task_shape.fill.fore_color.rgb = RGBColor(color_rgb[0], color_rgb[1], color_rgb[2])
+    task_shape.line.fill.background()
+
     # Ajouter le texte de la tâche
     text_frame = task_shape.text_frame
-    text_frame.text = task_info['task_name']
-    text_frame.paragraphs[0].font.size = Pt(12)
-    text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)  # Noir
-    
-    print(f"Tâche '{task_info['task_name']}' créée avec succès !")
-    print(f"  Mois de début : {start_month}, Position : {start_pos}")
-    print(f"  Mois de fin : {end_month}, Position : {end_pos}")
-    print(f"  Position X de début : {start_x / 914400:.2f} inches")
-    print(f"  Position X de fin : {end_x / 914400:.2f} inches")
-    print(f"  Largeur de la tâche : {task_width / 914400:.2f} inches")
+    text_frame.text = task_name
+    text_frame.paragraphs[0].font.size = Pt(10)
+    text_frame.paragraphs[0].font.color.rgb = RGBColor(0, 0, 0)  # Texte en noir
+    text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
 
 def create_roadmap_slide(prs, task_info=None):
     """Crée ou met à jour un slide de roadmap"""
@@ -370,6 +370,102 @@ def create_roadmap_slide(prs, task_info=None):
     
     return slide
 
+def normalize_text(text):
+    """
+    Normalise un texte en le nettoyant et le standardisant.
+    
+    Args:
+        text (str): Texte à normaliser
+    
+    Returns:
+        str: Texte normalisé
+    """
+    # Convertir en minuscules
+    text = text.lower()
+    
+    # Supprimer les espaces en début et fin
+    text = text.strip()
+    
+    # Remplacer les caractères spéciaux et multiples espaces
+    import re
+    text = re.sub(r'\s+', ' ', text)  # Remplacer les espaces multiples par un seul
+    text = re.sub(r'[^\w\s]', '', text)  # Supprimer la ponctuation
+    
+    return text
+
+def list_powerpoint_objects(file_path):
+    """
+    Liste tous les objets d'un fichier PowerPoint avec leurs labels.
+    
+    Args:
+        file_path (str): Chemin complet vers le fichier PowerPoint
+    
+    Returns:
+        list: Liste des textes normalisés trouvés dans le fichier PowerPoint
+    """
+    # Vérifier si le fichier existe
+    if not os.path.exists(file_path):
+        print(f"Erreur : Le fichier {file_path} n'existe pas.")
+        return []
+
+    # Charger la présentation
+    prs = Presentation(file_path)
+    
+    # Liste des objets à ignorer
+    ignored_objects = ['ROADMAP']
+    
+    # Liste pour stocker les objets
+    objects_list = []
+    
+    # Parcourir tous les slides
+    for slide_index, slide in enumerate(prs.slides, 1):
+        slide_objects = []
+        
+        # Parcourir les formes de chaque slide
+        for shape_index, shape in enumerate(slide.shapes, 1):
+            # Vérifier si la forme a un cadre de texte
+            if shape.has_text_frame:
+                # Extraire le texte du cadre
+                text = shape.text_frame.text.strip()
+                
+                # Ajouter le label si non vide et non ignoré
+                if text and text not in ignored_objects:
+                    slide_objects.append({
+                        'type': 'texte',
+                        'slide': slide_index,
+                        'index': shape_index,
+                        'text': text
+                    })
+            
+            # Vérifier si c'est un tableau
+            elif shape.has_table:
+                # Ignorer le tableau des mois
+                table = shape.table
+                first_row_texts = [cell.text.strip() for cell in table.rows[0].cells]
+                if not (len(first_row_texts) > 1 and all(len(month) == 3 for month in first_row_texts)):
+                    table_rows = []
+                    for row_index, row in enumerate(table.rows, 1):
+                        row_texts = [cell.text.strip() for cell in row.cells]
+                        if any(row_texts):
+                            table_rows.append({
+                                'row_index': row_index,
+                                'row_texts': row_texts
+                            })
+                    
+                    slide_objects.append({
+                        'type': 'tableau',
+                        'slide': slide_index,
+                        'index': shape_index,
+                        'rows': table_rows
+                    })
+        
+        # Ajouter les objets du slide à la liste principale si non vide
+        if slide_objects:
+            objects_list.extend(slide_objects)
+    
+    # Normaliser et retourner uniquement les textes
+    return [normalize_text(obj['text']) for obj in objects_list if obj['type'] == 'texte']
+
 def main():
     # Créer les dossiers de sortie
     templates_dir = "templates"
@@ -380,7 +476,7 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # Chemins complets
-    template_path = os.path.join(templates_dir, "roadmap_template.pptx")
+    template_path = os.path.join(templates_dir, "roadmap.pptx")
     output_path = os.path.join(output_dir, "roadmap.pptx")
     
     # Supprimer le fichier existant dans le répertoire de génération
@@ -407,6 +503,15 @@ def main():
     config = load_config()
     client = ollama.Client(host=config.get('ollama_host', 'http://localhost:11434'))
     
+
+    # ajouter ici un call vers la fonction list_powerpoint_objects du template qui peut ne pas etre vide
+    # Print les objets du fichier PowerPoint
+
+    print("\n--- Objets du fichier PowerPoint ---")
+    print("template_path : ", template_path)
+    objects = list_powerpoint_objects(template_path)
+    print("objects : ", objects)
+
     # Lire les prompts
     prompts = []
     
@@ -429,9 +534,39 @@ def main():
         print(f"\n--- Traitement du prompt : {prompt} ---")
         
         try:
-            task_info = parse_prompt_with_llm(client, prompt, config)
+            # Analyser le prompt
+            task_info = parse_project_prompt(client, prompt, config)
+        
             
+            # Vérifier si le nom de la tâche existe déjà dans les objets du PowerPoint
+            if 'task_name' in task_info:
+                normalized_task_name = normalize_text(task_info['task_name'])
+                if normalized_task_name in objects:
+                    print(f"task_name '{task_info['task_name']}' déjà présent dans le PPT")
+                    continue
+            
+            # Vérifier si les sous-tâches existent déjà
+            if 'tasks' in task_info:
+                existing_tasks = []
+                for task in task_info['tasks']:
+                    normalized_task_name = normalize_text(task['name'])
+                    if normalized_task_name in objects:
+                        print(f"task_name '{task['name']}' déjà présent dans le PPT")
+                        existing_tasks.append(task)
+                
+                # Supprimer les tâches existantes de task_info
+                if existing_tasks:
+                    task_info['tasks'] = [task for task in task_info['tasks'] if task not in existing_tasks]
+                
+                # Si toutes les tâches existaient, passer à l'itération suivante
+                if not task_info['tasks']:
+                    continue
+                        
             if task_info:
+                # Insérer ou mettre à jour la tâche dans la base de données
+                task_id = task_db.upsert_task(task_info)
+                print(f"Tâche créée ou mise à jour avec l'ID : {task_id}")
+                                
                 # Créer ou mettre à jour le slide de roadmap
                 create_roadmap_slide(prs, task_info)
                 
