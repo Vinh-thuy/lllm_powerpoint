@@ -162,8 +162,15 @@ class TaskDatabase:
                     'raw_prompt': raw_prompt
                 }
                 
-                # Ne conserver que les valeurs non-None
-                update_fields = {k: v for k, v in columns_mapping.items() if v is not None}
+                # Ne conserver que les valeurs explicitement fournies et non-None
+                keys_to_check = ['start_month', 'start_position', 'end_month', 'end_position', 
+                                 'color_rgb', 'start_date', 'end_date', 'raw_prompt']
+                
+                update_fields = {
+                    k: columns_mapping[k] 
+                    for k in keys_to_check 
+                    if k in task_info and columns_mapping[k] is not None
+                }
                 
                 if update_fields:
                     # Construire la requête de mise à jour
