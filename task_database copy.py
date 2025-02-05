@@ -1,22 +1,6 @@
 import sqlite3
 import json
 from datetime import datetime
-import re
-
-def normalize_text(text):
-    """
-    Normalise le texte en supprimant les caractères spéciaux et en uniformisant les espaces.
-    
-    Args:
-        text (str): Texte à normaliser
-    
-    Returns:
-        str: Texte normalisé
-    """
-    text = text.strip()
-    text = re.sub(r'\s+', ' ', text)  # Remplacer les espaces multiples par un seul
-    text = re.sub(r'[^\w\s]', '', text)  # Supprimer la ponctuation
-    return text.lower()
 
 class TaskDatabase:
     def __init__(self, db_path='tasks.db'):
@@ -82,7 +66,7 @@ class TaskDatabase:
             cursor = conn.cursor()
             
             # Préparer les valeurs
-            task_name = normalize_text(task_info.get('task_name', 'Unnamed Task'))
+            task_name = task_info.get('task_name', 'Unnamed Task')
             
             # Extraire start_month et end_month
             start_month = task_info.get('start_month', [None, None])
@@ -135,7 +119,7 @@ class TaskDatabase:
             cursor = conn.cursor()
             
             # Préparer les valeurs
-            task_name = normalize_text(task_info.get('task_name', 'Unnamed Task'))
+            task_name = task_info.get('task_name', 'Unnamed Task')
             
             # Convertir color_rgb en chaîne JSON si nécessaire
             color_rgb = (json.dumps(task_info['color_rgb']) 
@@ -233,7 +217,7 @@ class TaskDatabase:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            cursor.execute('SELECT * FROM tasks WHERE task_name = ? ORDER BY created_at DESC LIMIT 1', (normalize_text(task_name),))
+            cursor.execute('SELECT * FROM tasks WHERE task_name = ? ORDER BY created_at DESC LIMIT 1', (task_name,))
             row = cursor.fetchone()
             
             return dict(row) if row else None
@@ -256,54 +240,32 @@ class TaskDatabase:
             rows = cursor.fetchall()
             
             return [dict(row) for row in rows]
+
+def main():
+    # Exemple d'utilisation
+    db = TaskDatabase()
     
-    def delete_task(self, task_info, raw_prompt=None):
-        """
-        Supprime une tâche de la base de données en utilisant son nom.
-        
-        Args:
-            task_info (dict): Informations de la tâche à supprimer
-            raw_prompt (str, optional): Prompt original pour référence
-        
-        Returns:
-            bool: True si la suppression a réussi, False sinon
-        """
-        # Extraire et normaliser le nom de la tâche
-        task_name = normalize_text(task_info.get('task_name'))
-        
-        # Vérifier que le nom de tâche est présent
-        if not task_name:
-            print("Erreur : Aucun nom de tâche fourni pour la suppression")
-            return False
-        
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # Récupérer tous les noms de tâches
-                cursor.execute('SELECT task_name FROM tasks')
-                existing_tasks = cursor.fetchall()
-                
-                # Trouver la tâche correspondante après normalisation
-                matching_task = None
-                for (existing_task_name,) in existing_tasks:
-                    if normalize_text(existing_task_name) == task_name:
-                        matching_task = existing_task_name
-                        break
-                
-                if matching_task:
-                    # Exécuter la suppression avec le nom de tâche original
-                    cursor.execute('DELETE FROM tasks WHERE task_name = ?', (matching_task,))
-                    
-                    # Vérifier si une ligne a été supprimée
-                    if cursor.rowcount > 0:
-                        print(f"Tâche '{matching_task}' supprimée avec succès")
-                        conn.commit()
-                        return True
-                
-                print(f"Aucune tâche trouvée correspondant à '{task_name}'")
-                return False
-        
-        except sqlite3.Error as e:
-            print(f"Erreur lors de la suppression de la tâche : {e}")
-            return False
+    # Exemple de tâche
+    task_info = {
+        'task_name': 'Projet Test',
+        'start_month': [2, 0.5],
+        'end_month': [6, 1.0],
+        'color_rgb': [255, 0, 0],
+        'start_date': '2022-01-01',
+        'end_date': '2022-12-31'
+    }
+    
+    # Insérer une tâche
+    task_id = db.insert_task(task_info)
+    print(f"Tâche insérée avec l'ID : {task_id}")
+    
+    # Récupérer la tâche
+    task = db.get_task_by_name('Projet Test')
+    print("Tâche récupérée :", task)
+    
+    # Lister les tâches
+    tasks = db.list_tasks()
+    print("Liste des tâches :", tasks)
+
+if __name__ == "__main__":
+    main()

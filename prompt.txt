@@ -1,4 +1,4 @@
-je veux un projet 'CR1' du 1 juillet au 7 septembre (couleur : rouge)
-je veux un projet 'CR2' du 1 janvier au 4 mars (couleur : bleu)
-je veux un projet 'P4' du 15 mai au 4 decembre (couleur : vert)
-modifie le projet 'CR1' pour le démarrer le 15 fevrier
+delete  projet '1234'
+créer projet 'Projet TEST' du 28 mars au 1 juuillet  (couleur : vert)
+modifier projet 'psoitn' du 1 mars au 15 juin (couleur : bleu)
+je veux un projet 'laqt' du 28 fevrier au 10 aout (couleur : rouge)

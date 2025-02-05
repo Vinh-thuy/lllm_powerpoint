@@ -70,7 +70,7 @@ def parse_project_prompt(client, prompt, config):
         # Prompt système pour l'analyse
         system_prompt = """
         Tu es un assistant spécialisé dans l'analyse de prompts de projet.
-        Tu dois identifier si le prompt est une création ou une mise à jour de projet
+        Tu dois identifier si le prompt est une création, une mise à jour ou une suppression de projet
 
         Extrait les informations suivantes :
         - Nom du projet
@@ -86,41 +86,45 @@ def parse_project_prompt(client, prompt, config):
         
         Réponds UNIQUEMENT au format JSON suivant :
         {
-            "type": "create|update",
+            "type": "create|update|delete",
             "task_name": "Nom du projet",
-            "start_month": [index_mois, position_dans_mois],
             "start_date": "YYYY/MM/DD",
-            "end_month": [index_mois, position_dans_mois],
             "end_date": "YYYY/MM/DD",
+            "start_month": [index_mois, position_dans_mois],
+            "end_month": [index_mois, position_dans_mois],
             "color_rgb": [R, G, B]
         }
         
-        Règles pour la position dans le mois :
+        Règles pour le calcul de position_dans_mois :
         - 0.0 : début du mois (1-10)
         - 0.5 : milieu du mois (11-20)
         - 1.0 : fin du mois (21-31)
+
+        Règles pour le calcul de index_mois :
+        - Pour start_month : index_mois = start_date(mois) - 1
+        - Pour end_month : index_mois = end_date(mois) - 1
         
+
         Exemples :
         Prompt: "je veux un projet 'P1' du 15 mai au 29 decembre (couleur : vert)"
         Réponse: {
             "type": "create",
             "task_name": "P1",
-            "start_month": [4, 0.5],
             "start_date": "2025/05/15",
-            "end_month": [11, 1.0],
             "end_date": "2025/12/29",
+            "start_month": [4, 0.5],
+            "end_month": [11, 1.0],
             "color_rgb": [0, 255, 0]
         }
 
-        Prompt: "j
-        je veux un projet 'P1' du 25 mars au 3 aout (couleur : vert)"
+        Prompt: "je veux créer une tâche 'P1' du 25 mars au 3 aout (couleur : vert)"
         Réponse: {
             "type": "create",
             "task_name": "P1",
-            "start_month": [2, 1.0],
             "start_date": "2025/03/25",
-            "end_month": [7, 0.0],
             "end_date": "2025/08/03",
+            "start_month": [2, 1.0],
+            "end_month": [7, 0.0],
             "color_rgb": [0, 255, 0]
         }        
 
@@ -128,10 +132,40 @@ def parse_project_prompt(client, prompt, config):
         Réponse: {
             "type": "update",
             "task_name": "P1",
-            "start_month": [5, 0.0],
             "start_date": "2025/06/01",
-            "end_month": null,
             "end_date": null,
+            "start_month": [5, 0.0],
+            "end_month": null,
+            "color_rgb": null
+
+        Prompt: "Change 'P1' pour pour avir une date de fin au 13 avril"
+        Réponse: {
+            "type": "update",
+            "task_name": "P1",
+            "start_date": null,
+            "end_date": "2025/04/13",
+            "start_month": null,
+            "end_month": [3, 0.5],
+            "color_rgb": null
+
+        Prompt: "Update le projet 'P1' avec les dates début 25 mars et fin 3 aout (couleur : vert)"
+        Réponse: {
+            "type": "update",
+            "task_name": "P1",
+            "start_date": "2025/03/25",
+            "end_date": "2025/08/03",
+            "start_month": [2, 1.0],
+            "end_month": [7, 0.0],
+            "color_rgb": [0, 255, 0]
+
+        Prompt: "Supprime le projet 'P1'"
+        Réponse: {
+            "type": "delete",
+            "task_name": "P1",
+            "start_date": null,
+            "end_date": null,
+            "start_month": null,
+            "end_month": null,
             "color_rgb": null
         }
         """
@@ -255,7 +289,7 @@ def create_task_on_roadmap(prs, task_info):
         task_info (dict): Informations de la tâche
     """
     # Débogage : afficher le contenu complet de task_info
-    print("DEBUG - task_info complet :", json.dumps(task_info, indent=2))
+    #print("DEBUG - task_info complet :", json.dumps(task_info, indent=2))
     
     # Extraction des informations de la tâche
     task_name = task_info['task_name']
@@ -444,7 +478,6 @@ def normalize_text(text):
     text = text.strip()
     
     # Remplacer les caractères spéciaux et multiples espaces
-    import re
     text = re.sub(r'\s+', ' ', text)  # Remplacer les espaces multiples par un seul
     text = re.sub(r'[^\w\s]', '', text)  # Supprimer la ponctuation
     
@@ -585,13 +618,14 @@ def main():
             # Analyser le prompt
             task_info = parse_project_prompt(client, prompt, config)
             
-            if task_info:
+            if task_info and task_info.get('type') in ['create', 'update']:
                 # Insérer ou mettre à jour la tâche dans la base de données
                 task_id = task_db.upsert_task(task_info, raw_prompt=prompt)
                 print(f"Tâche créée ou mise à jour avec l'ID : {task_id}")
-                
-            else:
-                print("Impossible de parser le prompt")
+            elif task_info and task_info.get('type') == 'delete':
+                # Supprimer la tâche si le type est 'delete'
+                task_db.delete_task(task_info, raw_prompt=prompt)
+                print(f"Tâche supprimée : {task_info.get('task_name')}")
         
         except Exception as e:
             print(f"Erreur lors du traitement du prompt '{prompt}' : {e}")
