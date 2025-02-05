@@ -1,0 +1,27 @@
+openapi: 3.0.0
+info:
+  title: API Roadmap Generator
+  version: 1.0.0
+
+paths:
+  /process_prompt:
+    post:
+      operationId: process_prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+              required:
+                - prompt
+      responses:
+        '200':
+          description: Tâche traitée avec succès
+        '400':
+          description: Requête invalide
+        '500':
+          description: Erreur interne du serveur
