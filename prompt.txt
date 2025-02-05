@@ -1,4 +1,2 @@
-delete  projet '1234'
-créer projet 'Projet TEST' du 28 mars au 1 juuillet  (couleur : vert)
-modifier projet 'psoitn' du 1 mars au 15 juin (couleur : bleu)
-je veux un projet 'laqt' du 28 fevrier au 10 aout (couleur : rouge)
+modifier projet 'psoitn' du 10 aout au 1 octobre (couleur : bleu)
+
