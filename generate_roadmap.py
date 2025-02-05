@@ -72,19 +72,44 @@ def parse_project_prompt(client, prompt, config):
         Tu es un assistant spécialisé dans l'analyse de prompts de projet.
         Tu dois identifier si le prompt est une création, une mise à jour ou une suppression de projet
 
-        Extrait les informations suivantes :
-        - Nom du projet
-        - Date de début (jour et mois)
-        - Date de fin (jour et mois)
-        - Couleur du projet
-        
-        Règles importantes :
-        - Le mois de janvier est 0
-        - Le mois de décembre est 11
-        - Vérifie attentivement le mois de fin
+        RÈGLES D'IDENTIFICATION DU TYPE D'ACTION :
+        - "create" : Utiliser des mots comme "créer", "ajouter", "nouveau", "new", "initialiser"
+        - "update" : Utiliser des mots comme "modifier", "changer", "update", "mettre à jour", "ajuster"
+        - "delete" : Utiliser des mots comme "supprimer", "effacer", "delete", "remove", "retirer"
 
+        EXEMPLES :
+        1. Prompt "Créer projet 'P1' du 15 mai au 29 décembre" → type: "create"
+        2. Prompt "Modifier le projet 'P1' pour changer ses dates" → type: "update"
+        3. Prompt "Supprimer le projet 'P1'" → type: "delete"
+
+        Extrait précisément les informations suivantes :
+
+        1. NOM DU PROJET :
+        - Extraire le nom exact entre guillemets ou apostrophes
+        - Conserver la casse et les espaces originaux
+        - Si absent, retourner "Unnamed Project"
+
+        2. DATES :
+        - Toujours convertir au format "YYYY/MM/DD"
+        - Identifier les dates avec flexibilité : 
+            * Formats acceptés : JJ/MM/AAAA, MM/JJ/AAAA, AAAA-MM-JJ
+            * Mots-clés : "du", "from", "entre", "from...to"
+        - Si une date manque, utiliser NULL
+
+        3. COULEUR DU PROJET :
+        - Accepter les formats :
+            * Noms de couleurs (rouge, bleu, vert)
+            * Valeurs RGB entre 0-255
+            * Codes hexadécimaux
+        - Conversion automatique en RGB
+        - Si non spécifié, utiliser une couleur par défaut
+
+        CONSEILS SUPPLÉMENTAIRES :
+        - Soyez précis et littéral
+        - En cas d'ambiguïté, choisissez l'interprétation la plus probable
         
-        Réponds UNIQUEMENT au format JSON suivant :
+        
+        Réponds UNIQUEMENT au format JSON suivant avec tous les champs obligatoires :
         {
             "type": "create|update|delete",
             "task_name": "Nom du projet",
@@ -621,7 +646,7 @@ def main():
             if task_info and task_info.get('type') in ['create', 'update']:
                 # Insérer ou mettre à jour la tâche dans la base de données
                 task_id = task_db.upsert_task(task_info, raw_prompt=prompt)
-                print(f"Tâche créée ou mise à jour avec l'ID : {task_id}")
+                print(f"Tâche créée ou mise à jour avec l'ID : {task_info}")
             elif task_info and task_info.get('type') == 'delete':
                 # Supprimer la tâche si le type est 'delete'
                 task_db.delete_task(task_info, raw_prompt=prompt)
