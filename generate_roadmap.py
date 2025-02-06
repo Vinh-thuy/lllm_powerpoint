@@ -29,8 +29,17 @@ from flask_restx import Api, Resource, fields
 # Charger les variables d'environnement du fichier .env
 load_dotenv()
 
-# Configuration Flask
-app = Flask(__name__)
+
+# Obtenir le chemin absolu du répertoire du script
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(BASE_DIR, 'app', 'templates')
+
+app = Flask(__name__, template_folder=TEMPLATE_DIR)
+app.template_folder = TEMPLATE_DIR  # Forcer la vérification
+app.config['DEBUG'] = True
+app.config['EXPLAIN_TEMPLATE_LOADING'] = True  # Affiche les détails du chargement des templates
+
+
 CORS(app)
 
 # Initialisation de la base de données
@@ -531,13 +540,17 @@ def find_free_port():
         port = s.getsockname()[1]
     return port
 
+# Routes
+@app.route('/')
+def index():
+    return render_template('roadmap.html')
+
 # Configuration de l'API
 api = Api(app,
           version='1.0',
           title='Roadmap API',
-          doc='/swagger-ui/',
-          validate=True)
-
+          description='API pour la gestion des roadmaps PowerPoint',
+          doc='/swagger-ui/')  # Configuration du endpoint Swagger
 # Modèle de données
 prompt_model = api.model('Prompt', {
     'prompt': fields.String(required=True, description='Description textuelle du projet')
@@ -565,37 +578,6 @@ class ProcessPrompt(Resource):
             return {'message': 'Projet créé', 'task': task_info}, 200
         except Exception as e:
             return {'error': str(e)}, 500
-
-# Routes
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/api/tasks')
-def get_tasks():
-    tasks = task_db.list_tasks()
-    lanes = {}
-    processed_tasks = []
-    
-    for task in tasks:
-        start = task['start_month']
-        end = task['end_month']
-        lane = 0
-        
-        while any(t['end_month'] > start and lanes.get(t['id'], -1) == lane 
-                 for t in processed_tasks):
-            lane += 1
-        
-        processed_tasks.append({**task, 'lane': lane})
-        lanes[task['id']] = lane
-    
-    return jsonify([{
-        'task_name': t['task_name'],
-        'start_percent': (t['start_month']/12)*100,
-        'duration_percent': ((t['end_month']-t['start_month'])/12)*100,
-        'color_rgb': json.loads(t['color_rgb']),
-        'lane': t['lane']
-    } for t in processed_tasks])
 
 # Lancement de l'application
 if __name__ == '__main__':
