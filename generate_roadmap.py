@@ -543,7 +543,7 @@ def find_free_port():
 # Routes
 @app.route('/')
 def index():
-    return render_template('roadmap.html')
+    return render_template('index.html')
 
 # Configuration de l'API
 api = Api(app,
@@ -578,6 +578,34 @@ class ProcessPrompt(Resource):
             return {'message': 'Projet créé', 'task': task_info}, 200
         except Exception as e:
             return {'error': str(e)}, 500
+
+
+
+@app.route('/api/tasks')
+def get_tasks():
+    tasks = task_db.list_tasks()
+    lanes = {}
+    processed_tasks = []
+    
+    for task in tasks:
+        start = task['start_month']
+        end = task['end_month']
+        lane = 0
+        
+        while any(t['end_month'] > start and lanes.get(t['id'], -1) == lane 
+                 for t in processed_tasks):
+            lane += 1
+        
+        processed_tasks.append({**task, 'lane': lane})
+        lanes[task['id']] = lane
+    
+    return jsonify([{
+        'task_name': t['task_name'],
+        'start_percent': (t['start_month']/12)*100,
+        'duration_percent': ((t['end_month']-t['start_month'])/12)*100,
+        'color_rgb': json.loads(t['color_rgb']),
+        'lane': t['lane']
+    } for t in processed_tasks])
 
 # Lancement de l'application
 if __name__ == '__main__':
