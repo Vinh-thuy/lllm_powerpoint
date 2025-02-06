@@ -448,7 +448,7 @@ def process_prompt_line(prompt_line):
     
     config = {
         'host': os.getenv('OLLAMA_HOST', 'http://localhost:11434'),
-        'model': os.getenv('OLLAMA_MODEL', 'llama3')
+        'model': os.getenv('OLLAMA_MODEL', 'mervinpraison/llama3.2-3B-instruct-test-2:8b')
     }
     client = ollama.Client(config['host'])
     

@@ -128,7 +128,7 @@
             preview.innerHTML = tasks.map(task => 
                 `<div class="task-bar" 
                       style="--lane: ${task.lane};
-                             left: ${task.start_percent}%; 
+                             left: calc(${task.start_percent}% + 100px); 
                              width: ${task.duration_percent}%;
                              background: rgb(${task.color_rgb.join(',')})">
                     ${task.task_name}
