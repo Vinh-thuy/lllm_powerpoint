@@ -8,11 +8,16 @@
     <style>
         .roadmap-container {
             background: #f8f9fa;
-            border-radius: 12px;
-            padding: 2rem;
+            border-radius: 30px;
+            padding: 5rem;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            min-height: 100vh; /* Utiliser 80% de la hauteur de la fenêtre */
+            display: flex;
+            flex-direction: column;
         }
         .timeline {
+            flex-grow: 1; /* Permettre au timeline de prendre l'espace restant */
+            margin-bottom: 2rem; /* Ajouter de l'espace en bas */
             position: relative;
             min-height: 100px;
             height: auto;
@@ -44,12 +49,26 @@
             border-color: #0d6efd;
             box-shadow: none;
         }
+        .timeline-axis {
+            position: relative;
+            width: 100%;
+            height: 50px;
+            border-bottom: 2px solid #007bff;
+            margin-bottom: 1rem;
+        }
+        .timeline-month {
+            position: absolute;
+            bottom: 10px; /* Réduire l'espace sous l'axe */
+            transform: translateX(-50%);
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
     </style>
 </head>
 <body class="bg-light">
     <div class="container py-5">
         <div class="roadmap-container bg-white">
-            <h1 class="mb-4 text-primary">🛠 Gestionnaire de Projets</h1>
+            <h1 class="mb-4 text-primary h3">🛠 Gestionnaire de Projets</h1>
             
             <div class="mb-4">
                 <form id="prompt-form" onsubmit="return submitPrompt(event)">
@@ -57,9 +76,9 @@
                         id="prompt-input"
                         class="form-control mb-3"
                         placeholder="Ex: Créer un projet marketing du 1er mars au 15 avril en rouge"
-                        rows="3"
+                        rows="1"
                     ></textarea>
-                    <button type="submit" class="btn btn-primary btn-lg w-100">
+                    <button type="submit" class="btn btn-primary btn-sm w-100 py-2">
                         🚀 Générer le planning
                     </button>
                 </form>
@@ -71,7 +90,7 @@
                 </div>
             </div>
 
-            <h4 class="mb-3">📅 Aperçu du Planning</h4>
+            <div class="timeline-axis" id="timeline-axis"></div>
             <div id="roadmap-preview" class="timeline">
                 <!-- Les tâches seront ajoutées dynamiquement ici -->
             </div>
@@ -117,9 +136,24 @@
             ).join('')
         }
 
+        function createTimelineAxis() {
+            const months = ['Jan', 'Fev', 'Mar', 'Avr', 'Mai', 'Juin', 
+                            'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
+            const axisElement = document.getElementById('timeline-axis');
+            
+            months.forEach((month, index) => {
+                const monthElement = document.createElement('div');
+                monthElement.classList.add('timeline-month');
+                monthElement.style.left = `${(index + 0.5) * (100 / 12)}%`;
+                monthElement.textContent = month;
+                axisElement.appendChild(monthElement);
+            });
+        }
+
         // Actualisation automatique toutes les 10 secondes
         setInterval(updatePreview, 10000)
-        window.onload = updatePreview
+        window.addEventListener('load', updatePreview);
+        window.addEventListener('load', createTimelineAxis);
     </script>
 </body>
 </html>
