@@ -579,7 +579,7 @@ class ProcessPrompt(Resource):
         except Exception as e:
             return {'error': str(e)}, 500
 
-
+api.add_resource(ProcessPrompt, '/process_prompt')
 
 @app.route('/api/tasks')
 def get_tasks():
